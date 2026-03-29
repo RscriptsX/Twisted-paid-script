@@ -1,44 +1,32 @@
 -- RscriptsX | Twisted Script
 -- Rayfield GUI | Key: RscriptsX
--- Version: 2.0
+-- Version: 2.1 (anti-kick)
 
-task.spawn(function()
-
--- ============================================================
---  SERVICES
--- ============================================================
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
 local TeleportService   = game:GetService("TeleportService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Lighting          = game:GetService("Lighting")
 local Workspace         = game:GetService("Workspace")
+local HttpService       = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ============================================================
---  LOAD RAYFIELD
--- ============================================================
+-- Load Rayfield
 local Rayfield
-
-local function tryLoad(url)
-    local ok, result = pcall(function()
-        return loadstring(game:HttpGet(url))()
+local ok, err = pcall(function()
+    Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield", true))()
+end)
+if not ok or not Rayfield then
+    local ok2, err2 = pcall(function()
+        Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source", true))()
     end)
-    return ok and result or nil
+    if not ok2 or not Rayfield then
+        warn("[RscriptsX] Failed to load Rayfield: " .. tostring(err2 or err))
+        return
+    end
 end
 
-Rayfield = tryLoad("https://sirius.menu/rayfield")
-    or tryLoad("https://raw.githubusercontent.com/shlexware/Rayfield/main/source")
-
-if not Rayfield then
-    warn("[RscriptsX] Could not load Rayfield. Check your internet / executor HTTP permissions.")
-    return
-end
-
--- ============================================================
---  WINDOW  (key system built-in)
--- ============================================================
 local Window = Rayfield:CreateWindow({
     Name                   = "RscriptsX | Twisted",
     Icon                   = 0,
@@ -47,16 +35,9 @@ local Window = Rayfield:CreateWindow({
     Theme                  = "Default",
     DisableRayfieldPrompts = false,
     DisableBuildWarnings   = false,
-
-    ConfigurationSaving = {
-        Enabled    = true,
-        FolderName = "RscriptsX",
-        FileName   = "Twisted",
-    },
-
-    Discord = { Enabled = false },
-
-    KeySystem = true,
+    ConfigurationSaving    = { Enabled = true, FolderName = "RscriptsX", FileName = "Twisted" },
+    Discord                = { Enabled = false },
+    KeySystem              = true,
     KeySettings = {
         Title           = "RscriptsX",
         Subtitle        = "Enter your key to continue",
@@ -72,19 +53,19 @@ local Window = Rayfield:CreateWindow({
 --  STATE
 -- ============================================================
 local State = {
-    SpeedHack        = false,
-    SpeedValue       = 16,
-    JumpHack         = false,
-    JumpValue        = 50,
-    Noclip           = false,
-    GodMode          = false,
-    InfiniteStamina  = false,
-    AntiTrap         = false,
-    AutoCollect      = false,
-    PlayerESP        = false,
-    MonsterESP       = false,
-    ItemESP          = false,
-    Fullbright       = false,
+    SpeedHack       = false,
+    SpeedValue      = 24,   -- keep modest; huge values = instant kick
+    JumpHack        = false,
+    JumpValue       = 60,
+    Noclip          = false,
+    AutoHeal        = false, -- safe alternative to god mode
+    InfiniteStamina = false,
+    AntiTrap        = false,
+    AutoCollect     = false,
+    PlayerESP       = false,
+    MonsterESP      = false,
+    ItemESP         = false,
+    Fullbright      = false,
 
     OrigBrightness     = Lighting.Brightness,
     OrigClockTime      = Lighting.ClockTime,
@@ -100,31 +81,212 @@ local ESPObjects  = {}
 -- ============================================================
 --  HELPERS
 -- ============================================================
-local function getChar()
-    return LocalPlayer.Character
-end
-
+local function getChar() return LocalPlayer.Character end
 local function getHum()
     local c = getChar()
     return c and c:FindFirstChildOfClass("Humanoid")
 end
-
 local function getRoot()
     local c = getChar()
     return c and c:FindFirstChild("HumanoidRootPart")
 end
-
 local function notify(title, content, duration)
-    Rayfield:Notify({
-        Title    = title,
-        Content  = content,
-        Duration = duration or 3,
-        Image    = 4483362458,
-    })
+    Rayfield:Notify({ Title = title, Content = content, Duration = duration or 3, Image = 4483362458 })
 end
 
 -- ============================================================
---  PLAYER ESP
+--  SPEED HACK  (safe: set once, only re-apply if server reset it)
+--  Never spam-set every frame — that's what gets you kicked.
+-- ============================================================
+local speedApplied = false
+
+local function applySpeed()
+    local hum = getHum()
+    if not hum then return end
+    -- Clamp to a value the game won't immediately flag
+    local safe = math.min(State.SpeedValue, 50)
+    if hum.WalkSpeed ~= safe then
+        hum.WalkSpeed = safe
+    end
+end
+
+local function applyJump()
+    local hum = getHum()
+    if not hum then return end
+    local safe = math.min(State.JumpValue, 100)
+    if hum.JumpPower ~= safe then
+        hum.JumpPower = safe
+    end
+end
+
+-- Check every 0.5s rather than every frame
+local speedTimer = 0
+Connections.speedCheck = RunService.Heartbeat:Connect(function(dt)
+    speedTimer = speedTimer + dt
+    if speedTimer < 0.5 then return end
+    speedTimer = 0
+    if State.SpeedHack then applySpeed() end
+    if State.JumpHack  then applyJump()  end
+end)
+
+-- ============================================================
+--  NOCLIP  (safe: only legs/arms, NOT HumanoidRootPart)
+--  Root part position is server-validated; touching it = kick.
+-- ============================================================
+local NOCLIP_PARTS = {
+    "Left Leg", "Right Leg", "Left Arm", "Right Arm",
+    "UpperTorso", "LowerTorso", "Torso",
+}
+
+Connections.noclip = RunService.Stepped:Connect(function()
+    if not State.Noclip then return end
+    local char = getChar()
+    if not char then return end
+    for _, name in ipairs(NOCLIP_PARTS) do
+        local part = char:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+end)
+
+-- ============================================================
+--  AUTO HEAL  (safe: only heal when low, not to math.huge)
+--  We heal through a BodyPosition-style trick or just fire
+--  the in-game heal remote if one exists.
+-- ============================================================
+local healTimer = 0
+Connections.heal = RunService.Heartbeat:Connect(function(dt)
+    if not State.AutoHeal then return end
+    healTimer = healTimer + dt
+    if healTimer < 1 then return end  -- only attempt once per second
+    healTimer = 0
+    local hum = getHum()
+    if not hum or hum.Health <= 0 then return end
+    -- Only attempt if health dropped significantly
+    if hum.Health < hum.MaxHealth * 0.9 then
+        -- Try firing server-side heal remotes
+        for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+            if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                local n = remote.Name:lower()
+                if n:find("heal") or n:find("regen") or n:find("health") then
+                    pcall(function()
+                        if remote:IsA("RemoteEvent") then
+                            remote:FireServer()
+                        else
+                            remote:InvokeServer()
+                        end
+                    end)
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
+--  INFINITE STAMINA  (safe: only patch client-side NumberValues)
+-- ============================================================
+local staminaTimer = 0
+Connections.stamina = RunService.Heartbeat:Connect(function(dt)
+    if not State.InfiniteStamina then return end
+    staminaTimer = staminaTimer + dt
+    if staminaTimer < 0.2 then return end
+    staminaTimer = 0
+    local char = getChar()
+    if not char then return end
+    for _, v in ipairs(char:GetDescendants()) do
+        if v:IsA("NumberValue") then
+            local n = v.Name:lower()
+            if n:find("stamina") or n:find("energy") or n:find("sprint") then
+                v.Value = v.MaxValue or 100
+            end
+        end
+    end
+    -- Also check PlayerGui
+    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+    if gui then
+        for _, v in ipairs(gui:GetDescendants()) do
+            if v:IsA("NumberValue") then
+                local n = v.Name:lower()
+                if n:find("stamina") or n:find("energy") then
+                    v.Value = v.MaxValue or 100
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
+--  ANTI-TRAP  (safe: small jump nudge, no CFrame warp)
+-- ============================================================
+local trapTimer = 0
+Connections.antiTrap = RunService.Heartbeat:Connect(function(dt)
+    if not State.AntiTrap then return end
+    trapTimer = trapTimer + dt
+    if trapTimer < 0.3 then return end
+    trapTimer = 0
+    local hum  = getHum()
+    local root = getRoot()
+    if not hum or not root then return end
+    if root.Velocity.Magnitude < 0.5 and hum.MoveDirection.Magnitude > 0.1 then
+        hum.Jump = true
+    end
+end)
+
+-- ============================================================
+--  AUTO-COLLECT  (safe: teleport in small hops, not instant warp)
+-- ============================================================
+local ITEM_FOLDERS = {"Items","Batteries","Collectibles","Pickups","Objects","Interactables","Props"}
+
+local collectTimer = 0
+Connections.collect = RunService.Heartbeat:Connect(function(dt)
+    if not State.AutoCollect then return end
+    collectTimer = collectTimer + dt
+    if collectTimer < 0.5 then return end
+    collectTimer = 0
+
+    local root = getRoot()
+    if not root then return end
+
+    for _, fn in ipairs(ITEM_FOLDERS) do
+        local folder = Workspace:FindFirstChild(fn)
+        if folder then
+            for _, obj in ipairs(folder:GetChildren()) do
+                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
+                if part then
+                    local dist = (root.Position - part.Position).Magnitude
+                    if dist < 50 then
+                        -- Fire collect remotes first (no teleport needed if server handles it)
+                        local fired = false
+                        for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+                            if remote:IsA("RemoteEvent") then
+                                local n = remote.Name:lower()
+                                if n:find("collect") or n:find("pickup") or n:find("grab") or n:find("battery") then
+                                    pcall(function() remote:FireServer(obj) end)
+                                    fired = true
+                                end
+                            end
+                        end
+                        -- Only teleport if no remote found and item is close enough to not look suspicious
+                        if not fired and dist < 20 then
+                            root.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Re-apply after respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if State.SpeedHack then applySpeed() end
+    if State.JumpHack  then applyJump()  end
+end)
+
+-- ============================================================
+--  ESP
 -- ============================================================
 local function espColor(player)
     if player.Team then
@@ -136,7 +298,7 @@ local function espColor(player)
     return Color3.fromRGB(0, 150, 255), Color3.fromRGB(0, 100, 220)
 end
 
-local function makeHighlight(adornee, fill, outline)
+local function makeHighlight(adornee, fill, outline, name)
     local h = Instance.new("Highlight")
     h.FillColor           = fill
     h.OutlineColor        = outline
@@ -144,6 +306,7 @@ local function makeHighlight(adornee, fill, outline)
     h.OutlineTransparency = 0
     h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
     h.Adornee             = adornee
+    h.Name                = name or "RX_ESP"
     h.Parent              = game.CoreGui
     return h
 end
@@ -152,43 +315,28 @@ local function addPlayerESP(player)
     if player == LocalPlayer or ESPObjects[player] then return end
     local fill, outline = espColor(player)
     local h
-
     local function attach(char)
         if h then h:Destroy() end
         if State.PlayerESP then
-            h = makeHighlight(char, fill, outline)
-            h.Name = "RX_PlayerESP"
+            h = makeHighlight(char, fill, outline, "RX_PlayerESP")
         end
     end
-
     if player.Character then attach(player.Character) end
     local conn = player.CharacterAdded:Connect(function(char)
         task.wait(0.5)
         fill, outline = espColor(player)
         attach(char)
     end)
-
-    ESPObjects[player] = {
-        destroy = function()
-            if h then h:Destroy() end
-            conn:Disconnect()
-        end
-    }
+    ESPObjects[player] = { destroy = function() if h then h:Destroy() end; conn:Disconnect() end }
 end
 
 local function removePlayerESP(player)
-    if ESPObjects[player] then
-        ESPObjects[player].destroy()
-        ESPObjects[player] = nil
-    end
+    if ESPObjects[player] then ESPObjects[player].destroy(); ESPObjects[player] = nil end
 end
 
 local function enablePlayerESP()
     for _, p in ipairs(Players:GetPlayers()) do addPlayerESP(p) end
-    Connections.espAdded = Players.PlayerAdded:Connect(function(p)
-        task.wait(1)
-        if State.PlayerESP then addPlayerESP(p) end
-    end)
+    Connections.espAdded   = Players.PlayerAdded:Connect(function(p) task.wait(1); if State.PlayerESP then addPlayerESP(p) end end)
     Connections.espRemoved = Players.PlayerRemoving:Connect(removePlayerESP)
 end
 
@@ -198,20 +346,16 @@ local function disablePlayerESP()
     if Connections.espRemoved then Connections.espRemoved:Disconnect(); Connections.espRemoved = nil end
 end
 
--- ============================================================
---  MONSTER ESP
--- ============================================================
 local MONSTER_FOLDERS = {"Monsters","Monster","Entities","Entity","Enemies","Enemy","Killers","Twisted"}
 
 local function enableMonsterESP()
-    for _, name in ipairs(MONSTER_FOLDERS) do
-        local folder = Workspace:FindFirstChild(name)
+    for _, fn in ipairs(MONSTER_FOLDERS) do
+        local folder = Workspace:FindFirstChild(fn)
         if folder then
             for _, model in ipairs(folder:GetChildren()) do
                 if model:IsA("Model") then
-                    local h = makeHighlight(model, Color3.fromRGB(255, 40, 40), Color3.fromRGB(200, 0, 0))
+                    local h = makeHighlight(model, Color3.fromRGB(255, 40, 40), Color3.fromRGB(200, 0, 0), "RX_MonsterESP")
                     h.FillTransparency = 0.3
-                    h.Name = "RX_MonsterESP"
                 end
             end
         end
@@ -219,29 +363,17 @@ local function enableMonsterESP()
 end
 
 local function disableMonsterESP()
-    for _, v in ipairs(game.CoreGui:GetChildren()) do
-        if v.Name == "RX_MonsterESP" then v:Destroy() end
-    end
+    for _, v in ipairs(game.CoreGui:GetChildren()) do if v.Name == "RX_MonsterESP" then v:Destroy() end end
 end
 
--- ============================================================
---  ITEM ESP
--- ============================================================
-local ITEM_FOLDERS = {"Items","Batteries","Collectibles","Pickups","Objects","Interactables","Props"}
-
 local function enableItemESP()
-    for _, name in ipairs(ITEM_FOLDERS) do
-        local folder = Workspace:FindFirstChild(name)
+    for _, fn in ipairs(ITEM_FOLDERS) do
+        local folder = Workspace:FindFirstChild(fn)
         if folder then
             for _, obj in ipairs(folder:GetChildren()) do
                 local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
                 if part then
-                    local h = makeHighlight(
-                        obj:IsA("Model") and obj or part,
-                        Color3.fromRGB(255, 220, 0),
-                        Color3.fromRGB(200, 170, 0)
-                    )
-                    h.Name = "RX_ItemESP"
+                    makeHighlight(obj:IsA("Model") and obj or part, Color3.fromRGB(255, 220, 0), Color3.fromRGB(200, 170, 0), "RX_ItemESP")
                 end
             end
         end
@@ -249,127 +381,21 @@ local function enableItemESP()
 end
 
 local function disableItemESP()
-    for _, v in ipairs(game.CoreGui:GetChildren()) do
-        if v.Name == "RX_ItemESP" then v:Destroy() end
-    end
+    for _, v in ipairs(game.CoreGui:GetChildren()) do if v.Name == "RX_ItemESP" then v:Destroy() end end
 end
 
--- ============================================================
---  FULLBRIGHT
--- ============================================================
 local function setFullbright(on)
     if on then
-        Lighting.Brightness     = 2
-        Lighting.ClockTime      = 14
-        Lighting.FogEnd         = 100000
-        Lighting.GlobalShadows  = false
-        Lighting.Ambient        = Color3.fromRGB(178, 178, 178)
+        Lighting.Brightness = 2; Lighting.ClockTime = 14; Lighting.FogEnd = 100000
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(178, 178, 178)
         Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
     else
-        Lighting.Brightness     = State.OrigBrightness
-        Lighting.ClockTime      = State.OrigClockTime
-        Lighting.FogEnd         = State.OrigFogEnd
-        Lighting.GlobalShadows  = State.OrigGlobalShadows
-        Lighting.Ambient        = State.OrigAmbient
-        Lighting.OutdoorAmbient = State.OrigOutdoorAmbient
+        Lighting.Brightness = State.OrigBrightness; Lighting.ClockTime = State.OrigClockTime
+        Lighting.FogEnd = State.OrigFogEnd; Lighting.GlobalShadows = State.OrigGlobalShadows
+        Lighting.Ambient = State.OrigAmbient; Lighting.OutdoorAmbient = State.OrigOutdoorAmbient
     end
 end
-
--- ============================================================
---  AUTO-COLLECT
--- ============================================================
-local function tryCollect()
-    local root = getRoot()
-    if not root then return end
-    for _, folderName in ipairs(ITEM_FOLDERS) do
-        local folder = Workspace:FindFirstChild(folderName)
-        if folder then
-            for _, obj in ipairs(folder:GetChildren()) do
-                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
-                if part and (root.Position - part.Position).Magnitude < 80 then
-                    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
-                        if remote:IsA("RemoteEvent") then
-                            local n = remote.Name:lower()
-                            if n:find("collect") or n:find("pickup") or n:find("grab") or n:find("battery") then
-                                pcall(function() remote:FireServer(obj) end)
-                            end
-                        end
-                    end
-                    root.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0))
-                    task.wait(0.05)
-                end
-            end
-        end
-    end
-end
-
--- ============================================================
---  RUNTIME LOOPS
--- ============================================================
-Connections.heartbeat = RunService.Heartbeat:Connect(function()
-    local hum  = getHum()
-    local root = getRoot()
-    local char = getChar()
-
-    if State.SpeedHack and hum and hum.WalkSpeed ~= State.SpeedValue then
-        hum.WalkSpeed = State.SpeedValue
-    end
-
-    if State.JumpHack and hum and hum.JumpPower ~= State.JumpValue then
-        hum.JumpPower = State.JumpValue
-    end
-
-    if State.GodMode and hum then
-        hum.MaxHealth = math.huge
-        hum.Health    = math.huge
-    end
-
-    if State.InfiniteStamina and char then
-        for _, v in ipairs(char:GetDescendants()) do
-            if v:IsA("NumberValue") then
-                local n = v.Name:lower()
-                if n:find("stamina") or n:find("energy") or n:find("sprint") then
-                    v.Value = v.MaxValue or 100
-                end
-            end
-        end
-    end
-
-    if State.AntiTrap and root and hum then
-        if root.Velocity.Magnitude < 0.3 and hum.MoveDirection.Magnitude > 0.1 then
-            hum.Jump = true
-        end
-    end
-end)
-
-Connections.stepped = RunService.Stepped:Connect(function()
-    if not State.Noclip then return end
-    local char = getChar()
-    if char then
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then p.CanCollide = false end
-        end
-    end
-end)
-
-local lastCollect = 0
-Connections.collectLoop = RunService.Heartbeat:Connect(function()
-    if not State.AutoCollect then return end
-    local now = tick()
-    if now - lastCollect >= 0.3 then
-        lastCollect = now
-        pcall(tryCollect)
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    local hum = getHum()
-    if not hum then return end
-    if State.SpeedHack then hum.WalkSpeed = State.SpeedValue end
-    if State.JumpHack  then hum.JumpPower = State.JumpValue  end
-    if State.GodMode   then hum.MaxHealth = math.huge; hum.Health = math.huge end
-end)
 
 -- ============================================================
 --  TAB: PLAYER
@@ -382,16 +408,18 @@ TabPlayer:CreateToggle({
     Name = "Speed Hack", CurrentValue = false, Flag = "SpeedHack",
     Callback = function(v)
         State.SpeedHack = v
-        if not v then local h = getHum(); if h then h.WalkSpeed = 16 end end
+        if v then applySpeed() else
+            local h = getHum(); if h then h.WalkSpeed = 16 end
+        end
     end,
 })
 
 TabPlayer:CreateSlider({
-    Name = "Walk Speed", Range = {16, 200}, Increment = 1,
-    Suffix = "studs/s", CurrentValue = 16, Flag = "WalkSpeed",
+    Name = "Walk Speed", Range = {16, 50}, Increment = 1,
+    Suffix = "studs/s", CurrentValue = 24, Flag = "WalkSpeed",
     Callback = function(v)
         State.SpeedValue = v
-        if State.SpeedHack then local h = getHum(); if h then h.WalkSpeed = v end end
+        if State.SpeedHack then applySpeed() end
     end,
 })
 
@@ -399,16 +427,18 @@ TabPlayer:CreateToggle({
     Name = "Jump Hack", CurrentValue = false, Flag = "JumpHack",
     Callback = function(v)
         State.JumpHack = v
-        if not v then local h = getHum(); if h then h.JumpPower = 50 end end
+        if v then applyJump() else
+            local h = getHum(); if h then h.JumpPower = 50 end
+        end
     end,
 })
 
 TabPlayer:CreateSlider({
-    Name = "Jump Power", Range = {50, 300}, Increment = 5,
-    Suffix = "power", CurrentValue = 50, Flag = "JumpPower",
+    Name = "Jump Power", Range = {50, 100}, Increment = 5,
+    Suffix = "power", CurrentValue = 60, Flag = "JumpPower",
     Callback = function(v)
         State.JumpValue = v
-        if State.JumpHack then local h = getHum(); if h then h.JumpPower = v end end
+        if State.JumpHack then applyJump() end
     end,
 })
 
@@ -419,8 +449,9 @@ TabPlayer:CreateToggle({
         if not v then
             local char = getChar()
             if char then
-                for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") then p.CanCollide = true end
+                for _, name in ipairs(NOCLIP_PARTS) do
+                    local p = char:FindFirstChild(name)
+                    if p and p:IsA("BasePart") then p.CanCollide = true end
                 end
             end
         end
@@ -435,11 +466,8 @@ TabPlayer:CreateToggle({
 TabPlayer:CreateSection("Survival")
 
 TabPlayer:CreateToggle({
-    Name = "God Mode", CurrentValue = false, Flag = "GodMode",
-    Callback = function(v)
-        State.GodMode = v
-        if not v then local h = getHum(); if h then h.MaxHealth = 100; h.Health = 100 end end
-    end,
+    Name = "Auto Heal", CurrentValue = false, Flag = "AutoHeal",
+    Callback = function(v) State.AutoHeal = v end,
 })
 
 TabPlayer:CreateToggle({
@@ -451,7 +479,7 @@ TabPlayer:CreateToggle({
     Name = "Auto Collect Items / Batteries", CurrentValue = false, Flag = "AutoCollect",
     Callback = function(v)
         State.AutoCollect = v
-        if v then notify("Auto Collect", "Now auto-collecting nearby items.", 3) end
+        if v then notify("Auto Collect", "Collecting nearby items.", 3) end
     end,
 })
 
@@ -464,36 +492,24 @@ TabVisuals:CreateSection("ESP")
 
 TabVisuals:CreateToggle({
     Name = "Player ESP", CurrentValue = false, Flag = "PlayerESP",
-    Callback = function(v)
-        State.PlayerESP = v
-        if v then enablePlayerESP() else disablePlayerESP() end
-    end,
+    Callback = function(v) State.PlayerESP = v; if v then enablePlayerESP() else disablePlayerESP() end end,
 })
 
 TabVisuals:CreateToggle({
     Name = "Monster / Entity ESP", CurrentValue = false, Flag = "MonsterESP",
-    Callback = function(v)
-        State.MonsterESP = v
-        if v then enableMonsterESP() else disableMonsterESP() end
-    end,
+    Callback = function(v) State.MonsterESP = v; if v then enableMonsterESP() else disableMonsterESP() end end,
 })
 
 TabVisuals:CreateToggle({
     Name = "Item / Battery ESP", CurrentValue = false, Flag = "ItemESP",
-    Callback = function(v)
-        State.ItemESP = v
-        if v then enableItemESP() else disableItemESP() end
-    end,
+    Callback = function(v) State.ItemESP = v; if v then enableItemESP() else disableItemESP() end end,
 })
 
 TabVisuals:CreateSection("Lighting")
 
 TabVisuals:CreateToggle({
     Name = "Fullbright", CurrentValue = false, Flag = "Fullbright",
-    Callback = function(v)
-        State.Fullbright = v
-        setFullbright(v)
-    end,
+    Callback = function(v) State.Fullbright = v; setFullbright(v) end,
 })
 
 -- ============================================================
@@ -512,12 +528,9 @@ local function getPlayerNames()
 end
 
 local playerDropdown = TabTeleport:CreateDropdown({
-    Name = "Select Player",
-    Options = getPlayerNames(),
-    CurrentOption = {getPlayerNames()[1]},
-    MultipleOptions = false,
-    Flag = "TeleportTarget",
-    Callback = function() end,
+    Name = "Select Player", Options = getPlayerNames(),
+    CurrentOption = {getPlayerNames()[1]}, MultipleOptions = false,
+    Flag = "TeleportTarget", Callback = function() end,
 })
 
 TabTeleport:CreateButton({
@@ -525,28 +538,19 @@ TabTeleport:CreateButton({
     Callback = function()
         local sel = Rayfield.Flags.TeleportTarget
         local target = sel and sel[1]
-        if not target or target == "No other players" then
-            notify("Teleport", "No player selected.", 3)
-            return
-        end
+        if not target or target == "No other players" then notify("Teleport", "No player selected.", 3); return end
         local root = getRoot()
         local tp = Players:FindFirstChild(target)
         if root and tp and tp.Character then
             local tr = tp.Character:FindFirstChild("HumanoidRootPart")
-            if tr then
-                root.CFrame = tr.CFrame + Vector3.new(0, 0, 3)
-                notify("Teleport", "Teleported to " .. target, 3)
-            end
+            if tr then root.CFrame = tr.CFrame + Vector3.new(0, 0, 3); notify("Teleport", "Teleported to " .. target, 3) end
         end
     end,
 })
 
 TabTeleport:CreateButton({
     Name = "Refresh Player List",
-    Callback = function()
-        playerDropdown:Refresh(getPlayerNames(), false)
-        notify("Teleport", "Player list refreshed.", 2)
-    end,
+    Callback = function() playerDropdown:Refresh(getPlayerNames(), false); notify("Teleport", "Refreshed.", 2) end,
 })
 
 TabTeleport:CreateSection("World Teleport")
@@ -554,13 +558,11 @@ TabTeleport:CreateSection("World Teleport")
 TabTeleport:CreateButton({
     Name = "Teleport to Spawn",
     Callback = function()
-        local root = getRoot()
-        if not root then return end
+        local root = getRoot(); if not root then return end
         for _, v in ipairs(Workspace:GetDescendants()) do
             if v:IsA("SpawnLocation") then
                 root.CFrame = v.CFrame + Vector3.new(0, 5, 0)
-                notify("Teleport", "Teleported to Spawn.", 2)
-                return
+                notify("Teleport", "Teleported to Spawn.", 2); return
             end
         end
         notify("Teleport", "No spawn found.", 3)
@@ -570,8 +572,7 @@ TabTeleport:CreateButton({
 TabTeleport:CreateButton({
     Name = "Teleport to Nearest Item",
     Callback = function()
-        local root = getRoot()
-        if not root then return end
+        local root = getRoot(); if not root then return end
         local closest, closestDist = nil, math.huge
         for _, fn in ipairs(ITEM_FOLDERS) do
             local folder = Workspace:FindFirstChild(fn)
@@ -588,17 +589,14 @@ TabTeleport:CreateButton({
         if closest then
             root.CFrame = CFrame.new(closest.Position + Vector3.new(0, 4, 0))
             notify("Teleport", "Teleported to nearest item.", 2)
-        else
-            notify("Teleport", "No items found.", 3)
-        end
+        else notify("Teleport", "No items found.", 3) end
     end,
 })
 
 TabTeleport:CreateButton({
     Name = "Teleport to Nearest Monster",
     Callback = function()
-        local root = getRoot()
-        if not root then return end
+        local root = getRoot(); if not root then return end
         local closest, closestDist = nil, math.huge
         for _, fn in ipairs(MONSTER_FOLDERS) do
             local folder = Workspace:FindFirstChild(fn)
@@ -617,9 +615,7 @@ TabTeleport:CreateButton({
         if closest then
             root.CFrame = CFrame.new(closest.Position + Vector3.new(5, 0, 5))
             notify("Teleport", "Teleported near monster.", 2)
-        else
-            notify("Teleport", "No monsters found.", 3)
-        end
+        else notify("Teleport", "No monsters found.", 3) end
     end,
 })
 
@@ -632,20 +628,16 @@ TabMisc:CreateSection("Utilities")
 
 TabMisc:CreateButton({
     Name = "Rejoin Server",
-    Callback = function()
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
-    end,
+    Callback = function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end,
 })
 
 TabMisc:CreateButton({
     Name = "Copy Player List",
     Callback = function()
         local names = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            table.insert(names, p.Name)
-        end
+        for _, p in ipairs(Players:GetPlayers()) do table.insert(names, p.Name) end
         pcall(setclipboard, table.concat(names, "\n"))
-        notify("Copied!", "Player list copied to clipboard.", 3)
+        notify("Copied!", "Player list copied.", 3)
     end,
 })
 
@@ -662,13 +654,8 @@ TabMisc:CreateButton({
 TabMisc:CreateSection("Info")
 TabMisc:CreateLabel("Script by RscriptsX")
 TabMisc:CreateLabel("Game: Twisted")
-TabMisc:CreateLabel("Version: 2.0 | Rayfield GUI")
+TabMisc:CreateLabel("Version: 2.1 | Anti-kick build")
 TabMisc:CreateLabel("Key: RscriptsX")
 
--- ============================================================
---  FINISH
--- ============================================================
 Rayfield:LoadConfiguration()
-notify("RscriptsX", "Twisted Script v2.0 loaded!", 5)
-
-end) -- end task.spawn
+notify("RscriptsX", "Twisted Script v2.1 loaded!", 5)

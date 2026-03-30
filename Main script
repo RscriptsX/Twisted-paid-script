@@ -1,68 +1,38 @@
--- ██████╗ ███████╗ ██████╗██████╗ ██╗██████╗ ████████╗███████╗██╗  ██╗
--- ██╔══██╗██╔════╝██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝██╔════╝╚██╗██╔╝
--- ██████╔╝███████╗██║     ██████╔╝██║██████╔╝   ██║   ███████╗ ╚███╔╝ 
--- ██╔══██╗╚════██║██║     ██╔══██╗██║██╔═══╝    ██║   ╚════██║ ██╔██╗ 
--- ██║  ██║███████║╚██████╗██║  ██║██║██║        ██║   ███████║██╔╝ ██╗
--- ╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   ╚══════╝╚═╝  ╚═╝
---              Twisted Script | Rayfield GUI | Key: RscriptsX
+-- RscriptsX | Twisted 1.22
+-- Version: 4.1
 
--- ============================================================
---  SERVICES
--- ============================================================
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local TeleportService  = game:GetService("TeleportService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Lighting         = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
 local Workspace        = game:GetService("Workspace")
-
-local LocalPlayer = Players.LocalPlayer
+local LocalPlayer      = Players.LocalPlayer
 
 -- ============================================================
---  LOAD RAYFIELD
+--  RAYFIELD
 -- ============================================================
 local Rayfield
-do
-    local ok, err = pcall(function()
-        Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-    end)
-    if not ok then
-        warn("[RscriptsX] Failed to load Rayfield: " .. tostring(err))
-        return
-    end
+pcall(function() Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield",true))() end)
+if not Rayfield then
+    pcall(function() Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source",true))() end)
 end
+if not Rayfield then warn("[RscriptsX] Rayfield failed to load"); return end
 
--- ============================================================
---  WINDOW  (key system built-in)
--- ============================================================
 local Window = Rayfield:CreateWindow({
-    Name              = "RscriptsX | Twisted",
-    Icon              = 0,
-    LoadingTitle      = "RscriptsX",
-    LoadingSubtitle   = "Twisted Script",
-    Theme             = "Default",
-
-    DisableRayfieldPrompts  = false,
-    DisableBuildWarnings    = false,
-
-    ConfigurationSaving = {
-        Enabled    = true,
-        FolderName = "RscriptsX",
-        FileName   = "Twisted",
-    },
-
-    Discord = { Enabled = false },
-
+    Name = "RscriptsX | Twisted 1.22",
+    LoadingTitle = "RscriptsX",
+    LoadingSubtitle = "Twisted Tornado Chaser",
+    Theme = "Default",
+    ConfigurationSaving = { Enabled = true, FolderName = "RscriptsX", FileName = "Twisted" },
     KeySystem = true,
     KeySettings = {
-        Title              = "RscriptsX",
-        Subtitle           = "Enter your key to continue",
-        Note               = "Key: RscriptsX",
-        FileName           = "TwistedKey",
-        SaveKey            = true,
-        GrabKeyFromSite    = false,
-        Key                = {"RscriptsX"},
+        Title = "RscriptsX",
+        Subtitle = "Enter key to continue",
+        Note = "Key: RscriptsX",
+        FileName = "TwistedKey",
+        SaveKey = true,
+        GrabKeyFromSite = false,
+        Key = {"RscriptsX"},
     },
 })
 
@@ -70,696 +40,662 @@ local Window = Rayfield:CreateWindow({
 --  STATE
 -- ============================================================
 local State = {
-    -- Player
-    SpeedHack         = false,
-    SpeedValue        = 16,
-    JumpHack          = false,
-    JumpValue         = 50,
-    Noclip            = false,
-    GodMode           = false,
-    InfiniteStamina   = false,
-    AntiTrap          = false,
-    AutoCollect       = false,
-
-    -- Visuals
-    PlayerESP         = false,
-    MonsterESP        = false,
-    ItemESP           = false,
-    Fullbright        = false,
-    CrosshairESP      = false,
-
-    -- Stored original lighting
-    OrigBrightness    = Lighting.Brightness,
-    OrigClockTime     = Lighting.ClockTime,
-    OrigFogEnd        = Lighting.FogEnd,
-    OrigGlobalShadows = Lighting.GlobalShadows,
-    OrigAmbient       = Lighting.Ambient,
-    OrigOutdoorAmbient= Lighting.OutdoorAmbient,
+    TornadoESP       = false,
+    PlayerESP        = false,
+    ProbeESP         = false,
+    Fly              = false,
+    FlySpeed         = 80,
+    CarFly           = false,
+    CarSpeedMod      = false,
+    CarSpeedVal      = 100,
+    CarAccelMod      = false,
+    CarAccelVal      = 100,
+    CarWindMod       = false,
+    CarWindVal       = 200,
+    AntiRagdoll      = false,
+    PlayerInvincible = false,
+    CarInvincible    = false,
 }
 
-local Connections = {}
-local ESPObjects  = {}
+local Connections   = {}
+local ESPObjects    = {}
+local PrevPositions = {}
 
 -- ============================================================
 --  HELPERS
 -- ============================================================
-local function getChar()
-    return LocalPlayer.Character
+local function getChar()  return LocalPlayer.Character end
+local function getHum()   local c=getChar(); return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot()  local c=getChar(); return c and c:FindFirstChild("HumanoidRootPart") end
+local function notify(t,c,d) Rayfield:Notify({Title=t,Content=c,Duration=d or 3,Image=4483362458}) end
+
+local function getPlayerCar()
+    local hum = getHum()
+    if not hum or not hum.SeatPart then return nil end
+    local seat  = hum.SeatPart
+    local seats = seat.Parent
+    local car   = seats and seats.Parent
+    if car and car.Parent and car.Parent.Name == "cars" then return car end
+    return nil
 end
 
-local function getHum()
-    local c = getChar()
-    return c and c:FindFirstChildOfClass("Humanoid")
+local function getEF(winds)
+    if     winds >= 200 then return 5
+    elseif winds >= 165 then return 4
+    elseif winds >= 136 then return 3
+    elseif winds >= 111 then return 2
+    elseif winds >= 86  then return 1
+    elseif winds >= 65  then return 0
+    else                     return -1 end
 end
 
-local function getRoot()
-    local c = getChar()
-    return c and c:FindFirstChild("HumanoidRootPart")
+local EF_COLORS = {
+    [-1] = Color3.fromRGB(180,180,180),
+    [0]  = Color3.fromRGB(0,  210,  0),
+    [1]  = Color3.fromRGB(180,210,  0),
+    [2]  = Color3.fromRGB(255,165,  0),
+    [3]  = Color3.fromRGB(255,  0,  0),
+    [4]  = Color3.fromRGB(180,  0,180),
+    [5]  = Color3.fromRGB(100,  0,100),
+}
+
+local function getTornadoData(storm)
+    local configs  = storm:FindFirstChild("configs")
+    local tFolder  = configs and configs:FindFirstChild("tornado")
+    if not tFolder then return nil end
+    local windFolder = storm:FindFirstChild("wind")
+    local center     = windFolder and windFolder:FindFirstChild("center")
+    local pos        = center and center.Position
+                    or (storm.PrimaryPart and storm.PrimaryPart.Position)
+                    or Vector3.zero
+    local function val(name)  local v=tFolder:FindFirstChild(name); return v and v.Value or 0     end
+    local function bval(name) local v=tFolder:FindFirstChild(name); return v and v.Value or false  end
+    return {
+        winds     = val("winds"),
+        otg       = bval("otg"),
+        windfield = val("windfield"),
+        width     = val("width"),
+        vort      = val("vort_stability"),
+        pos       = pos,
+        center    = center,
+    }
 end
 
-local function notify(title, content, duration)
-    Rayfield:Notify({
-        Title    = title,
-        Content  = content,
-        Duration = duration or 3,
-        Image    = 4483362458,
-    })
+local function getMoveSpeed(storm, pos)
+    local now  = tick()
+    local prev = PrevPositions[storm]
+    local speed = 0
+    if prev then
+        local dt = now - prev.t
+        if dt > 0.1 then
+            speed = (pos - prev.p).Magnitude / dt
+            PrevPositions[storm] = {p=pos, t=now, spd=speed}
+        else
+            speed = prev.spd or 0
+        end
+    else
+        PrevPositions[storm] = {p=pos, t=now, spd=0}
+    end
+    return math.floor(speed * 10) / 10
+end
+
+-- ============================================================
+--  TORNADO ESP
+-- ============================================================
+local function makeTornadoBB(parent)
+    local existing = parent:FindFirstChild("RX_BB")
+    if existing then existing:Destroy() end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "RX_BB"
+    bb.Size = UDim2.new(0, 270, 0, 80)
+    bb.StudsOffset = Vector3.new(0, 120, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = parent  -- must be a BasePart
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1,0,1,0)
+    bg.BackgroundColor3 = Color3.new(0,0,0)
+    bg.BackgroundTransparency = 0.3
+    bg.BorderSizePixel = 0
+    bg.Parent = bb
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0,6)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "lbl"
+    lbl.Size = UDim2.new(1,-8,1,-4)
+    lbl.Position = UDim2.new(0,4,0,2)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 13
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextWrapped = true
+    lbl.Parent = bg
+
+    return bb, lbl
+end
+
+local function addTornadoESP(storm)
+    if ESPObjects[storm] then return end
+
+    local h = Instance.new("Highlight")
+    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    h.FillTransparency = 0.55
+    h.OutlineTransparency = 0
+    h.Adornee = storm
+    h.Name = "RX_TornadoESP"
+    h.Parent = game.CoreGui
+
+    -- Parent billboard to the center BasePart so it renders correctly
+    local windFolder = storm:FindFirstChild("wind")
+    local center     = windFolder and windFolder:FindFirstChild("center")
+    local bbParent   = center or storm.PrimaryPart
+    local bb, lbl
+    if bbParent then
+        bb, lbl = makeTornadoBB(bbParent)
+    end
+
+    local conn = RunService.Heartbeat:Connect(function()
+        if not storm.Parent then
+            pcall(function() h:Destroy() end)
+            pcall(function() if bb then bb:Destroy() end end)
+            conn:Disconnect()
+            ESPObjects[storm] = nil
+            return
+        end
+        if not State.TornadoESP then return end
+
+        local d = getTornadoData(storm)
+        if not d then return end
+
+        -- lazy-create billboard if center wasn't ready at addTornadoESP time
+        if not bb and d.center then
+            bb, lbl = makeTornadoBB(d.center)
+        end
+
+        local root = getRoot()
+        local dist = root and math.floor((root.Position - d.pos).Magnitude) or 0
+        local spd  = getMoveSpeed(storm, d.pos)
+        local ef   = getEF(d.winds)
+        local col  = EF_COLORS[ef] or EF_COLORS[-1]
+
+        h.FillColor    = col
+        h.OutlineColor = col
+        if lbl then
+            lbl.TextColor3 = col
+            lbl.Text = string.format(
+                "%s  |  %s  |  Vort: %d\nWinds: %d mph   Width: %d\nSpeed: %.1f s/s   Dist: %d studs",
+                ef >= 0 and ("EF"..ef) or "PRE-TORNADO",
+                d.otg and "ON GROUND" or "ALOFT",
+                d.vort,
+                math.floor(d.winds),
+                math.floor(d.width),
+                spd,
+                dist
+            )
+        end
+    end)
+
+    ESPObjects[storm] = {type="tornado", h=h, bb=bb, conn=conn}
+end
+
+local function enableTornadoESP()
+    local sf = Workspace:FindFirstChild("storm_related") and Workspace.storm_related:FindFirstChild("storms")
+    if not sf then notify("Tornado ESP", "storm_related/storms not found!", 4); return end
+    for _, s in ipairs(sf:GetChildren()) do addTornadoESP(s) end
+    Connections.stormAdded = sf.ChildAdded:Connect(function(s)
+        task.wait(0.5); if State.TornadoESP then addTornadoESP(s) end
+    end)
+end
+
+local function disableTornadoESP()
+    for k, v in pairs(ESPObjects) do
+        if v.type == "tornado" then
+            pcall(function() v.h:Destroy() end)
+            pcall(function() if v.bb then v.bb:Destroy() end end)
+            v.conn:Disconnect()
+            ESPObjects[k] = nil
+        end
+    end
+    if Connections.stormAdded then Connections.stormAdded:Disconnect(); Connections.stormAdded=nil end
 end
 
 -- ============================================================
 --  PLAYER ESP
 -- ============================================================
-local function espColorForPlayer(player)
-    -- Red for monster/killer team, blue for survivors
-    if player.Team then
-        local tn = player.Team.Name:lower()
-        if tn:find("monster") or tn:find("twisted") or tn:find("killer") then
-            return Color3.fromRGB(255, 50, 50), Color3.fromRGB(255, 0, 0)
-        end
-    end
-    return Color3.fromRGB(0, 150, 255), Color3.fromRGB(0, 100, 220)
-end
-
-local function buildHighlight(adornee, fill, outline, depth)
-    local h = Instance.new("Highlight")
-    h.FillColor         = fill
-    h.OutlineColor      = outline
-    h.FillTransparency  = 0.45
-    h.OutlineTransparency = 0
-    h.DepthMode         = depth or Enum.HighlightDepthMode.AlwaysOnTop
-    h.Adornee           = adornee
-    h.Parent            = game.CoreGui
-    return h
-end
-
 local function addPlayerESP(player)
-    if player == LocalPlayer then return end
-    if ESPObjects[player] then return end
-
-    local fill, outline = espColorForPlayer(player)
-    local h = nil
-
+    if player == LocalPlayer or ESPObjects[player] then return end
+    local h
     local function attach(char)
         if h then h:Destroy() end
-        if State.PlayerESP then
-            h = buildHighlight(char, fill, outline)
-            h.Name = "RX_PlayerESP"
-        end
+        if not State.PlayerESP then return end
+        h = Instance.new("Highlight")
+        h.FillColor = Color3.fromRGB(0,150,255)
+        h.OutlineColor = Color3.fromRGB(0,100,220)
+        h.FillTransparency = 0.4
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee = char
+        h.Name = "RX_PlayerESP"
+        h.Parent = game.CoreGui
     end
-
     if player.Character then attach(player.Character) end
-
-    local conn = player.CharacterAdded:Connect(function(char)
-        task.wait(0.5)
-        fill, outline = espColorForPlayer(player)
-        attach(char)
-    end)
-
-    ESPObjects[player] = { highlight = function() return h end, conn = conn, destroy = function()
-        if h then h:Destroy(); h = nil end
-        conn:Disconnect()
-    end}
-end
-
-local function removePlayerESP(player)
-    if ESPObjects[player] then
-        ESPObjects[player].destroy()
-        ESPObjects[player] = nil
-    end
+    local conn = player.CharacterAdded:Connect(function(c) task.wait(0.5); attach(c) end)
+    ESPObjects[player] = {
+        type    = "player",
+        destroy = function() if h then h:Destroy() end; conn:Disconnect() end
+    }
 end
 
 local function enablePlayerESP()
     for _, p in ipairs(Players:GetPlayers()) do addPlayerESP(p) end
-    Connections.espAdded = Players.PlayerAdded:Connect(function(p)
-        task.wait(1)
-        if State.PlayerESP then addPlayerESP(p) end
+    Connections.plrAdded   = Players.PlayerAdded:Connect(function(p)
+        task.wait(1); if State.PlayerESP then addPlayerESP(p) end
     end)
-    Connections.espRemoved = Players.PlayerRemoving:Connect(removePlayerESP)
+    Connections.plrRemoved = Players.PlayerRemoving:Connect(function(p)
+        if ESPObjects[p] then ESPObjects[p].destroy(); ESPObjects[p]=nil end
+    end)
 end
 
 local function disablePlayerESP()
-    for _, p in ipairs(Players:GetPlayers()) do removePlayerESP(p) end
-    if Connections.espAdded   then Connections.espAdded:Disconnect();   Connections.espAdded   = nil end
-    if Connections.espRemoved then Connections.espRemoved:Disconnect(); Connections.espRemoved = nil end
-end
-
--- ============================================================
---  MONSTER / ENTITY ESP
--- ============================================================
-local MONSTER_FOLDERS = {"Monsters","Monster","Entities","Entity","Enemies","Enemy","Killers","Twisted"}
-
-local function enableMonsterESP()
-    for _, folderName in ipairs(MONSTER_FOLDERS) do
-        local folder = Workspace:FindFirstChild(folderName)
-        if folder then
-            for _, model in ipairs(folder:GetChildren()) do
-                if model:IsA("Model") then
-                    local h = buildHighlight(model,
-                        Color3.fromRGB(255, 40, 40),
-                        Color3.fromRGB(200, 0, 0))
-                    h.FillTransparency = 0.3
-                    h.Name = "RX_MonsterESP"
-                end
-            end
-        end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if ESPObjects[p] and ESPObjects[p].type=="player" then ESPObjects[p].destroy(); ESPObjects[p]=nil end
     end
+    if Connections.plrAdded   then Connections.plrAdded:Disconnect();   Connections.plrAdded=nil   end
+    if Connections.plrRemoved then Connections.plrRemoved:Disconnect(); Connections.plrRemoved=nil end
 end
 
-local function disableMonsterESP()
-    for _, v in ipairs(game.CoreGui:GetChildren()) do
-        if v.Name == "RX_MonsterESP" then v:Destroy() end
+-- ============================================================
+--  PROBE ESP
+-- ============================================================
+local function enableProbeESP()
+    local pf = Workspace:FindFirstChild("player_related") and Workspace.player_related:FindFirstChild("probes")
+    if not pf then notify("Probe ESP", "Probes folder not found!", 3); return end
+    local function add(obj)
+        local h = Instance.new("Highlight")
+        h.FillColor = Color3.fromRGB(255,200,0)
+        h.OutlineColor = Color3.fromRGB(200,150,0)
+        h.FillTransparency = 0.3
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee = obj
+        h.Name = "RX_ProbeESP"
+        h.Parent = game.CoreGui
     end
+    for _, p in ipairs(pf:GetChildren()) do add(p) end
+    Connections.probeAdded = pf.ChildAdded:Connect(add)
+end
+
+local function disableProbeESP()
+    for _, v in ipairs(game.CoreGui:GetChildren()) do if v.Name=="RX_ProbeESP" then v:Destroy() end end
+    if Connections.probeAdded then Connections.probeAdded:Disconnect(); Connections.probeAdded=nil end
 end
 
 -- ============================================================
---  ITEM / BATTERY ESP
+--  FLY  (LinearVelocity -- no PlatformStand, no anti-cheat kick)
 -- ============================================================
-local ITEM_FOLDERS = {"Items","Batteries","Collectibles","Pickups","Objects","Interactables","Props"}
+local flyLV, flyAtt
 
-local function enableItemESP()
-    for _, folderName in ipairs(ITEM_FOLDERS) do
-        local folder = Workspace:FindFirstChild(folderName)
-        if folder then
-            for _, obj in ipairs(folder:GetChildren()) do
-                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
-                if part then
-                    local h = buildHighlight(obj:IsA("Model") and obj or part,
-                        Color3.fromRGB(255, 220, 0),
-                        Color3.fromRGB(200, 170, 0))
-                    h.Name = "RX_ItemESP"
-                end
-            end
-        end
-    end
+local function cleanFly()
+    if flyAtt and flyAtt.Parent then flyAtt:Destroy() end
+    if flyLV  and flyLV.Parent  then flyLV:Destroy()  end
+    flyAtt, flyLV = nil, nil
 end
 
-local function disableItemESP()
-    for _, v in ipairs(game.CoreGui:GetChildren()) do
-        if v.Name == "RX_ItemESP" then v:Destroy() end
-    end
-end
-
--- ============================================================
---  FULLBRIGHT
--- ============================================================
-local function setFullbright(on)
-    if on then
-        Lighting.Brightness      = 2
-        Lighting.ClockTime       = 14
-        Lighting.FogEnd          = 100000
-        Lighting.GlobalShadows   = false
-        Lighting.Ambient         = Color3.fromRGB(178, 178, 178)
-        Lighting.OutdoorAmbient  = Color3.fromRGB(178, 178, 178)
-    else
-        Lighting.Brightness      = State.OrigBrightness
-        Lighting.ClockTime       = State.OrigClockTime
-        Lighting.FogEnd          = State.OrigFogEnd
-        Lighting.GlobalShadows   = State.OrigGlobalShadows
-        Lighting.Ambient         = State.OrigAmbient
-        Lighting.OutdoorAmbient  = State.OrigOutdoorAmbient
-    end
-end
-
--- ============================================================
---  AUTO-COLLECT
--- ============================================================
-local function tryCollect()
+local function enableFly()
+    cleanFly()
     local root = getRoot()
     if not root then return end
 
-    for _, folderName in ipairs(ITEM_FOLDERS) do
-        local folder = Workspace:FindFirstChild(folderName)
-        if folder then
-            for _, obj in ipairs(folder:GetChildren()) do
-                local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
-                if part then
-                    local dist = (root.Position - part.Position).Magnitude
-                    if dist < 80 then
-                        -- Fire any collect-style remote
-                        for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
-                            if remote:IsA("RemoteEvent") then
-                                local n = remote.Name:lower()
-                                if n:find("collect") or n:find("pickup") or
-                                   n:find("grab")    or n:find("battery") or
-                                   n:find("item") then
-                                    pcall(function() remote:FireServer(obj) end)
-                                end
-                            end
-                        end
-                        -- Teleport to item as fallback
-                        root.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0))
-                        task.wait(0.05)
-                    end
-                end
-            end
+    flyAtt = Instance.new("Attachment")
+    flyAtt.Name = "RX_FlyAtt"
+    flyAtt.Parent = root
+
+    flyLV = Instance.new("LinearVelocity")
+    flyLV.Name = "RX_FlyLV"
+    flyLV.Attachment0 = flyAtt
+    flyLV.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+    flyLV.VectorVelocity = Vector3.zero
+    flyLV.MaxForce = 1e6
+    flyLV.RelativeTo = Enum.ActuatorRelativeTo.World
+    flyLV.Parent = root
+
+    if Connections.fly then Connections.fly:Disconnect() end
+    Connections.fly = RunService.Heartbeat:Connect(function()
+        if not State.Fly then
+            cleanFly()
+            if Connections.fly then Connections.fly:Disconnect(); Connections.fly=nil end
+            return
         end
-    end
+        local r = getRoot()
+        if not r or not flyLV or not flyLV.Parent then return end
+
+        local cam = Workspace.CurrentCamera
+        local spd = State.FlySpeed
+        local vel = Vector3.zero
+        local hasW = UserInputService:IsKeyDown(Enum.KeyCode.W)
+        local hasS = UserInputService:IsKeyDown(Enum.KeyCode.S)
+        local hasA = UserInputService:IsKeyDown(Enum.KeyCode.A)
+        local hasD = UserInputService:IsKeyDown(Enum.KeyCode.D)
+        local hasUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+        local hasDn = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+
+        if hasW then vel = vel + cam.CFrame.LookVector  * spd end
+        if hasS then vel = vel - cam.CFrame.LookVector  * spd end
+        if hasA then vel = vel - cam.CFrame.RightVector * spd end
+        if hasD then vel = vel + cam.CFrame.RightVector * spd end
+        if hasUp then vel = vel + Vector3.new(0, spd, 0)      end
+        if hasDn then vel = vel - Vector3.new(0, spd, 0)      end
+
+        -- hover when no vertical key
+        if not hasUp and not hasDn then
+            vel = Vector3.new(vel.X, 0, vel.Z)
+        end
+
+        flyLV.VectorVelocity = vel
+    end)
 end
 
 -- ============================================================
---  HEARTBEAT LOOP  (all per-frame features)
+--  CAR FLY  (LinearVelocity on chassis)
 -- ============================================================
-Connections.heartbeat = RunService.Heartbeat:Connect(function()
-    local hum  = getHum()
-    local root = getRoot()
-    local char = getChar()
+local carFlyAtt, carFlyLV
 
-    -- Speed hack
-    if State.SpeedHack and hum then
-        if hum.WalkSpeed ~= State.SpeedValue then
-            hum.WalkSpeed = State.SpeedValue
+local function cleanCarFly()
+    if carFlyAtt and carFlyAtt.Parent then carFlyAtt:Destroy() end
+    if carFlyLV  and carFlyLV.Parent  then carFlyLV:Destroy()  end
+    carFlyAtt, carFlyLV = nil, nil
+end
+
+local function enableCarFly()
+    if Connections.carFly then Connections.carFly:Disconnect() end
+    Connections.carFly = RunService.Heartbeat:Connect(function()
+        if not State.CarFly then
+            cleanCarFly()
+            if Connections.carFly then Connections.carFly:Disconnect(); Connections.carFly=nil end
+            return
         end
-    end
+        local car = getPlayerCar()
+        if not car then cleanCarFly(); return end
+        local chassis = car:FindFirstChild("chassis")
+        if not chassis then cleanCarFly(); return end
 
-    -- Jump hack
-    if State.JumpHack and hum then
-        if hum.JumpPower ~= State.JumpValue then
-            hum.JumpPower = State.JumpValue
+        -- (re)create constraint if chassis changed
+        if not (carFlyLV and carFlyLV.Parent == chassis) then
+            cleanCarFly()
+            carFlyAtt = Instance.new("Attachment")
+            carFlyAtt.Name = "RX_CFAtt"
+            carFlyAtt.Parent = chassis
+
+            carFlyLV = Instance.new("LinearVelocity")
+            carFlyLV.Name = "RX_CFLV"
+            carFlyLV.Attachment0 = carFlyAtt
+            carFlyLV.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+            carFlyLV.VectorVelocity = Vector3.zero
+            carFlyLV.MaxForce = 5e6
+            carFlyLV.RelativeTo = Enum.ActuatorRelativeTo.World
+            carFlyLV.Parent = chassis
         end
-    end
 
-    -- God mode
-    if State.GodMode and hum then
-        hum.MaxHealth = math.huge
-        if hum.Health < math.huge then hum.Health = math.huge end
-    end
+        local cam = Workspace.CurrentCamera
+        local spd = State.FlySpeed * 2
+        local vel = Vector3.zero
+        local hasUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+        local hasDn = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 
-    -- Infinite stamina: keep any stamina NumberValues maxed
-    if State.InfiniteStamina and char then
-        for _, v in ipairs(char:GetDescendants()) do
-            if v:IsA("NumberValue") then
-                local n = v.Name:lower()
-                if n:find("stamina") or n:find("energy") or n:find("sprint") then
-                    v.Value = v.MaxValue or 100
-                end
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + cam.CFrame.LookVector  * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - cam.CFrame.LookVector  * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - cam.CFrame.RightVector * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + cam.CFrame.RightVector * spd end
+        if hasUp then vel = vel + Vector3.new(0, spd, 0) end
+        if hasDn then vel = vel - Vector3.new(0, spd, 0) end
+
+        if not hasUp and not hasDn then
+            vel = Vector3.new(vel.X, 0, vel.Z)
+        end
+
+        carFlyLV.VectorVelocity = vel
+    end)
+end
+
+-- ============================================================
+--  PLAYER INVINCIBILITY  (counter wind lift + auto-heal)
+-- ============================================================
+local function enablePlayerInvincible()
+    if Connections.plrInvince then Connections.plrInvince:Disconnect() end
+    Connections.plrInvince = RunService.Heartbeat:Connect(function()
+        if not State.PlayerInvincible then
+            if Connections.plrInvince then Connections.plrInvince:Disconnect(); Connections.plrInvince=nil end
+            return
+        end
+        local hum  = getHum()
+        local root = getRoot()
+        if not hum or not root then return end
+
+        -- full health always
+        if hum.Health < hum.MaxHealth then
+            hum.Health = hum.MaxHealth
+        end
+
+        -- cancel tornado-induced upward velocity
+        local vel = root.AssemblyLinearVelocity
+        if vel.Y > 8 then
+            root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
+        end
+    end)
+end
+
+-- ============================================================
+--  CAR INVINCIBILITY  (body modifier max + counter chassis lift)
+-- ============================================================
+local function enableCarInvincible()
+    if Connections.carInvince then Connections.carInvince:Disconnect() end
+    Connections.carInvince = RunService.Heartbeat:Connect(function()
+        if not State.CarInvincible then
+            -- restore body modifier to default when turned off
+            local car = getPlayerCar()
+            if car then
+                local mod = car:FindFirstChild("modifiers")
+                if mod then mod:SetAttribute("body", 100) end
+            end
+            if Connections.carInvince then Connections.carInvince:Disconnect(); Connections.carInvince=nil end
+            return
+        end
+        local car = getPlayerCar()
+        if not car then return end
+
+        -- set wind threshold so high the tornado can never lift the car
+        local mod = car:FindFirstChild("modifiers")
+        if mod then
+            mod:SetAttribute("body", 999999)
+        end
+
+        -- also physically counter any upward velocity being applied to chassis
+        local chassis = car:FindFirstChild("chassis")
+        if chassis then
+            local vel = chassis.AssemblyLinearVelocity
+            if vel.Y > 2 then
+                chassis.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
             end
         end
-    end
+    end)
+end
 
-    -- Anti-trap: jump if stuck
-    if State.AntiTrap and root and hum then
-        if root.Velocity.Magnitude < 0.3 and hum.MoveDirection.Magnitude > 0.1 then
-            hum.Jump = true
-        end
-    end
-end)
-
--- Noclip (Stepped so it fires before physics)
-Connections.stepped = RunService.Stepped:Connect(function()
-    if State.Noclip then
-        local char = getChar()
-        if char then
-            for _, p in ipairs(char:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    p.CanCollide = false
-                end
-            end
-        end
+-- ============================================================
+--  CAR MODIFIERS  (engine / traction / body attributes)
+-- ============================================================
+local carModT = 0
+Connections.carMods = RunService.Heartbeat:Connect(function(dt)
+    carModT = carModT + dt
+    if carModT < 0.25 then return end
+    carModT = 0
+    if not (State.CarSpeedMod or State.CarAccelMod or State.CarWindMod) then return end
+    local car = getPlayerCar(); if not car then return end
+    local mod = car:FindFirstChild("modifiers"); if not mod then return end
+    if State.CarSpeedMod then mod:SetAttribute("engine",   State.CarSpeedVal) end
+    if State.CarAccelMod then mod:SetAttribute("traction", State.CarAccelVal) end
+    -- CarInvincible overrides CarWindMod for the body attribute
+    if State.CarWindMod and not State.CarInvincible then
+        mod:SetAttribute("body", State.CarWindVal)
     end
 end)
 
--- Auto-collect throttled loop
-local lastCollect = 0
-Connections.collectLoop = RunService.Heartbeat:Connect(function()
-    if not State.AutoCollect then return end
-    local now = tick()
-    if now - lastCollect >= 0.3 then
-        lastCollect = now
-        pcall(tryCollect)
+-- ============================================================
+--  ANTI-RAGDOLL
+-- ============================================================
+Connections.antiRag = RunService.Heartbeat:Connect(function()
+    if not State.AntiRagdoll then return end
+    local c = getChar(); if not c then return end
+    for _, v in ipairs(c:GetDescendants()) do
+        if v:IsA("BallSocketConstraint") then v.Enabled = false end
     end
 end)
 
--- Character respawn: re-apply persistent states
+-- ============================================================
+--  RESPAWN HANDLER
+-- ============================================================
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    local hum = getHum()
-    if hum then
-        if State.SpeedHack then hum.WalkSpeed = State.SpeedValue end
-        if State.JumpHack  then hum.JumpPower = State.JumpValue  end
-        if State.GodMode   then hum.MaxHealth = math.huge; hum.Health = math.huge end
-    end
+    task.wait(1)
+    cleanFly(); cleanCarFly()
+    if State.Fly             then enableFly()             end
+    if State.CarFly          then enableCarFly()          end
+    if State.PlayerInvincible then enablePlayerInvincible() end
+    if State.CarInvincible    then enableCarInvincible()    end
 end)
+
+-- ============================================================
+--  TAB: TORNADO
+-- ============================================================
+local TabT = Window:CreateTab("Tornado", 4483362458)
+
+TabT:CreateSection("ESP")
+TabT:CreateToggle({
+    Name="Tornado ESP", CurrentValue=false, Flag="TornadoESP",
+    Callback=function(v) State.TornadoESP=v; if v then enableTornadoESP() else disableTornadoESP() end end
+})
+
+TabT:CreateSection("Teleport")
+TabT:CreateButton({
+    Name="Teleport to Nearest Tornado",
+    Callback=function()
+        local root = getRoot(); if not root then return end
+        local sf = Workspace:FindFirstChild("storm_related") and Workspace.storm_related:FindFirstChild("storms")
+        if not sf then notify("Teleport","No storms folder.",3); return end
+        local best, bestD = nil, math.huge
+        for _, s in ipairs(sf:GetChildren()) do
+            local d = getTornadoData(s)
+            if d then
+                local dist = (root.Position - d.pos).Magnitude
+                if dist < bestD then bestD=dist; best=d end
+            end
+        end
+        if best then
+            root.CFrame = CFrame.new(best.pos + Vector3.new(0,15,0))
+            notify("Teleport","Teleported to tornado!",2)
+        else
+            notify("Teleport","No tornadoes found.",3)
+        end
+    end
+})
 
 -- ============================================================
 --  TAB: PLAYER
 -- ============================================================
-local TabPlayer = Window:CreateTab("Player", 4483362458)
+local TabP = Window:CreateTab("Player", 4483362458)
 
-TabPlayer:CreateSection("Movement")
-
-TabPlayer:CreateToggle({
-    Name         = "Speed Hack",
-    CurrentValue = false,
-    Flag         = "SpeedHack",
-    Callback     = function(v)
-        State.SpeedHack = v
-        if not v then
-            local hum = getHum()
-            if hum then hum.WalkSpeed = 16 end
-        end
-    end,
+TabP:CreateSection("ESP")
+TabP:CreateToggle({
+    Name="Player ESP", CurrentValue=false, Flag="PlayerESP",
+    Callback=function(v) State.PlayerESP=v; if v then enablePlayerESP() else disablePlayerESP() end end
+})
+TabP:CreateToggle({
+    Name="Probe ESP", CurrentValue=false, Flag="ProbeESP",
+    Callback=function(v) State.ProbeESP=v; if v then enableProbeESP() else disableProbeESP() end end
 })
 
-TabPlayer:CreateSlider({
-    Name         = "Walk Speed",
-    Range        = {16, 200},
-    Increment    = 1,
-    Suffix       = "studs/s",
-    CurrentValue = 16,
-    Flag         = "WalkSpeed",
-    Callback     = function(v)
-        State.SpeedValue = v
-        if State.SpeedHack then
-            local hum = getHum()
-            if hum then hum.WalkSpeed = v end
-        end
-    end,
+TabP:CreateSection("Movement")
+TabP:CreateToggle({
+    Name="Fly  [WASD + Space / Shift]", CurrentValue=false, Flag="Fly",
+    Callback=function(v) State.Fly=v; if v then enableFly() end end
+})
+TabP:CreateSlider({
+    Name="Fly Speed", Range={10,300}, Increment=10, Suffix="studs/s", CurrentValue=80, Flag="FlySpeed",
+    Callback=function(v) State.FlySpeed=v end
 })
 
-TabPlayer:CreateToggle({
-    Name         = "Jump Hack",
-    CurrentValue = false,
-    Flag         = "JumpHack",
-    Callback     = function(v)
-        State.JumpHack = v
-        if not v then
-            local hum = getHum()
-            if hum then hum.JumpPower = 50 end
-        end
-    end,
-})
-
-TabPlayer:CreateSlider({
-    Name         = "Jump Power",
-    Range        = {50, 300},
-    Increment    = 5,
-    Suffix       = "power",
-    CurrentValue = 50,
-    Flag         = "JumpPower",
-    Callback     = function(v)
-        State.JumpValue = v
-        if State.JumpHack then
-            local hum = getHum()
-            if hum then hum.JumpPower = v end
-        end
-    end,
-})
-
-TabPlayer:CreateToggle({
-    Name         = "Noclip",
-    CurrentValue = false,
-    Flag         = "Noclip",
-    Callback     = function(v)
-        State.Noclip = v
-        if not v then
-            -- Restore collisions
-            local char = getChar()
-            if char then
-                for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") then p.CanCollide = true end
-                end
-            end
-        end
-    end,
-})
-
-TabPlayer:CreateToggle({
-    Name         = "Infinite Stamina",
-    CurrentValue = false,
-    Flag         = "InfiniteStamina",
-    Callback     = function(v) State.InfiniteStamina = v end,
-})
-
-TabPlayer:CreateSection("Survival")
-
-TabPlayer:CreateToggle({
-    Name         = "God Mode",
-    CurrentValue = false,
-    Flag         = "GodMode",
-    Callback     = function(v)
-        State.GodMode = v
-        if not v then
-            local hum = getHum()
-            if hum then hum.MaxHealth = 100; hum.Health = 100 end
-        end
-    end,
-})
-
-TabPlayer:CreateToggle({
-    Name         = "Anti-Trap",
-    CurrentValue = false,
-    Flag         = "AntiTrap",
-    Callback     = function(v) State.AntiTrap = v end,
-})
-
-TabPlayer:CreateToggle({
-    Name         = "Auto Collect Items / Batteries",
-    CurrentValue = false,
-    Flag         = "AutoCollect",
-    Callback     = function(v)
-        State.AutoCollect = v
-        if v then
-            notify("Auto Collect", "Auto-collecting enabled", 3)
-        end
-    end,
-})
-
--- ============================================================
---  TAB: VISUALS
--- ============================================================
-local TabVisuals = Window:CreateTab("Visuals", 4483362458)
-
-TabVisuals:CreateSection("ESP")
-
-TabVisuals:CreateToggle({
-    Name         = "Player ESP",
-    CurrentValue = false,
-    Flag         = "PlayerESP",
-    Callback     = function(v)
-        State.PlayerESP = v
-        if v then enablePlayerESP() else disablePlayerESP() end
-    end,
-})
-
-TabVisuals:CreateToggle({
-    Name         = "Monster / Entity ESP",
-    CurrentValue = false,
-    Flag         = "MonsterESP",
-    Callback     = function(v)
-        State.MonsterESP = v
-        if v then enableMonsterESP() else disableMonsterESP() end
-    end,
-})
-
-TabVisuals:CreateToggle({
-    Name         = "Item / Battery ESP",
-    CurrentValue = false,
-    Flag         = "ItemESP",
-    Callback     = function(v)
-        State.ItemESP = v
-        if v then enableItemESP() else disableItemESP() end
-    end,
-})
-
-TabVisuals:CreateSection("Lighting")
-
-TabVisuals:CreateToggle({
-    Name         = "Fullbright",
-    CurrentValue = false,
-    Flag         = "Fullbright",
-    Callback     = function(v)
-        State.Fullbright = v
-        setFullbright(v)
-    end,
-})
-
--- ============================================================
---  TAB: TELEPORT
--- ============================================================
-local TabTeleport = Window:CreateTab("Teleport", 4483362458)
-
-TabTeleport:CreateSection("Player Teleport")
-
--- Build player list (refreshed on open)
-local function getPlayerNames()
-    local names = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            table.insert(names, p.Name)
-        end
+TabP:CreateSection("Survival")
+TabP:CreateToggle({
+    Name="Player Invincibility  (anti-lift + auto-heal)", CurrentValue=false, Flag="PlayerInvincible",
+    Callback=function(v)
+        State.PlayerInvincible=v
+        if v then enablePlayerInvincible() end
     end
-    if #names == 0 then names = {"No other players"} end
-    return names
-end
-
-local playerDropdown = TabTeleport:CreateDropdown({
-    Name           = "Select Player",
-    Options        = getPlayerNames(),
-    CurrentOption  = {getPlayerNames()[1]},
-    MultipleOptions= false,
-    Flag           = "TeleportTarget",
-    Callback       = function(_) end,
+})
+TabP:CreateToggle({
+    Name="Anti-Ragdoll", CurrentValue=false, Flag="AntiRag",
+    Callback=function(v) State.AntiRagdoll=v end
 })
 
-TabTeleport:CreateButton({
-    Name     = "Teleport to Player",
-    Callback = function()
-        local sel = Rayfield.Flags.TeleportTarget
-        local target = sel and sel[1]
-        if not target or target == "No other players" then
-            notify("Teleport", "No player selected.", 3)
-            return
-        end
-        local root = getRoot()
-        local targetPlayer = Players:FindFirstChild(target)
-        if root and targetPlayer and targetPlayer.Character then
-            local tr = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if tr then
-                root.CFrame = tr.CFrame + Vector3.new(0, 0, 3)
-                notify("Teleport", "Teleported to " .. target, 3)
-            end
-        end
-    end,
+-- ============================================================
+--  TAB: VEHICLE
+-- ============================================================
+local TabV = Window:CreateTab("Vehicle", 4483362458)
+
+TabV:CreateSection("Car Survival")
+TabV:CreateToggle({
+    Name="Car Invincibility  (never lifted, even at 1000 mph)", CurrentValue=false, Flag="CarInvincible",
+    Callback=function(v)
+        State.CarInvincible=v
+        if v then enableCarInvincible() end
+    end
 })
 
-TabTeleport:CreateButton({
-    Name     = "Refresh Player List",
-    Callback = function()
-        playerDropdown:Refresh(getPlayerNames(), false)
-        notify("Teleport", "Player list refreshed.", 2)
-    end,
+TabV:CreateSection("Car Fly")
+TabV:CreateToggle({
+    Name="Car Fly  [WASD + Space / Shift]", CurrentValue=false, Flag="CarFly",
+    Callback=function(v) State.CarFly=v; if v then enableCarFly() end end
 })
 
-TabTeleport:CreateSection("World Teleport")
-
-TabTeleport:CreateButton({
-    Name     = "Teleport to Spawn",
-    Callback = function()
-        local root = getRoot()
-        if not root then return end
-        for _, v in ipairs(Workspace:GetDescendants()) do
-            if v:IsA("SpawnLocation") then
-                root.CFrame = v.CFrame + Vector3.new(0, 5, 0)
-                notify("Teleport", "Teleported to Spawn.", 2)
-                return
-            end
-        end
-        notify("Teleport", "No spawn location found.", 3)
-    end,
+TabV:CreateSection("Car Modifiers")
+TabV:CreateToggle({
+    Name="Car Speed Modifier  (engine)", CurrentValue=false, Flag="CarSpeedMod",
+    Callback=function(v) State.CarSpeedMod=v end
 })
-
-TabTeleport:CreateButton({
-    Name     = "Teleport to Nearest Item",
-    Callback = function()
-        local root = getRoot()
-        if not root then return end
-        local closest, closestDist = nil, math.huge
-        for _, folderName in ipairs(ITEM_FOLDERS) do
-            local folder = Workspace:FindFirstChild(folderName)
-            if folder then
-                for _, obj in ipairs(folder:GetChildren()) do
-                    local part = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
-                    if part then
-                        local d = (root.Position - part.Position).Magnitude
-                        if d < closestDist then
-                            closestDist = d
-                            closest = part
-                        end
-                    end
-                end
-            end
-        end
-        if closest then
-            root.CFrame = CFrame.new(closest.Position + Vector3.new(0, 4, 0))
-            notify("Teleport", "Teleported to nearest item.", 2)
-        else
-            notify("Teleport", "No items found in world.", 3)
-        end
-    end,
+TabV:CreateSlider({
+    Name="Engine Power", Range={50,500}, Increment=5, Suffix="%", CurrentValue=100, Flag="CarSpeedVal",
+    Callback=function(v) State.CarSpeedVal=v end
 })
-
-TabTeleport:CreateButton({
-    Name     = "Teleport to Nearest Monster",
-    Callback = function()
-        local root = getRoot()
-        if not root then return end
-        local closest, closestDist = nil, math.huge
-        for _, folderName in ipairs(MONSTER_FOLDERS) do
-            local folder = Workspace:FindFirstChild(folderName)
-            if folder then
-                for _, model in ipairs(folder:GetChildren()) do
-                    if model:IsA("Model") then
-                        local part = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildOfClass("BasePart")
-                        if part then
-                            local d = (root.Position - part.Position).Magnitude
-                            if d < closestDist then
-                                closestDist = d
-                                closest = part
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        if closest then
-            root.CFrame = CFrame.new(closest.Position + Vector3.new(5, 0, 5))
-            notify("Teleport", "Teleported near monster.", 2)
-        else
-            notify("Teleport", "No monsters found.", 3)
-        end
-    end,
+TabV:CreateToggle({
+    Name="Car Acceleration Modifier  (traction)", CurrentValue=false, Flag="CarAccelMod",
+    Callback=function(v) State.CarAccelMod=v end
+})
+TabV:CreateSlider({
+    Name="Traction", Range={50,500}, Increment=5, Suffix="%", CurrentValue=100, Flag="CarAccelVal",
+    Callback=function(v) State.CarAccelVal=v end
+})
+TabV:CreateToggle({
+    Name="Car Windspeed Threshold  (body)", CurrentValue=false, Flag="CarWindMod",
+    Callback=function(v) State.CarWindMod=v end
+})
+TabV:CreateSlider({
+    Name="Wind Threshold", Range={100,1000}, Increment=10, Suffix="%", CurrentValue=200, Flag="CarWindVal",
+    Callback=function(v) State.CarWindVal=v end
 })
 
 -- ============================================================
 --  TAB: MISC
 -- ============================================================
-local TabMisc = Window:CreateTab("Misc", 4483362458)
-
-TabMisc:CreateSection("Utilities")
-
-TabMisc:CreateButton({
-    Name     = "Rejoin Server",
-    Callback = function()
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
-    end,
+local TabM = Window:CreateTab("Misc", 4483362458)
+TabM:CreateSection("Game")
+TabM:CreateButton({
+    Name="Rejoin Server",
+    Callback=function() TeleportService:Teleport(game.PlaceId,LocalPlayer) end
 })
+TabM:CreateSection("Info")
+TabM:CreateLabel("RscriptsX | Twisted 1.22")
+TabM:CreateLabel("Key: RscriptsX")
+TabM:CreateLabel("Version: 4.1")
 
-TabMisc:CreateButton({
-    Name     = "Copy Player List",
-    Callback = function()
-        local names = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            table.insert(names, p.Name .. " (Ping: " .. tostring(p:GetNetworkPing and math.floor(p:GetNetworkPing()*1000) or "?") .. "ms)")
-        end
-        local result = table.concat(names, "\n")
-        pcall(setclipboard, result)
-        notify("Copied!", "Player list copied to clipboard.", 3)
-    end,
-})
-
-TabMisc:CreateButton({
-    Name     = "Refresh All ESPs",
-    Callback = function()
-        if State.PlayerESP  then disablePlayerESP();  enablePlayerESP()  end
-        if State.MonsterESP then disableMonsterESP(); enableMonsterESP() end
-        if State.ItemESP    then disableItemESP();    enableItemESP()    end
-        notify("ESP", "All ESPs refreshed.", 2)
-    end,
-})
-
-TabMisc:CreateSection("Info")
-
-TabMisc:CreateLabel("Script by RscriptsX")
-TabMisc:CreateLabel("Game: Twisted")
-TabMisc:CreateLabel("Version: 2.0 | Rayfield GUI")
-TabMisc:CreateLabel("Key: RscriptsX")
-
--- ============================================================
---  LOAD SAVED CONFIGURATION
--- ============================================================
 Rayfield:LoadConfiguration()
-
--- ============================================================
---  WELCOME NOTIFICATION
--- ============================================================
-notify("RscriptsX", "Twisted Script v2.0 loaded! Enjoy.", 5)
+notify("RscriptsX","Twisted Script v4.1 loaded!",5)

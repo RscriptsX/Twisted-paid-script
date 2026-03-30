@@ -1,5 +1,5 @@
 -- RscriptsX | Twisted 1.22
--- Version: 4.1
+-- Version: 4.2
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -139,6 +139,13 @@ local function getMoveSpeed(storm, pos)
     return math.floor(speed * 10) / 10
 end
 
+-- Flatten a vector to the horizontal plane and normalize it
+local function flatUnit(v)
+    local f = Vector3.new(v.X, 0, v.Z)
+    if f.Magnitude < 0.001 then return Vector3.zero end
+    return f.Unit
+end
+
 -- ============================================================
 --  TORNADO ESP
 -- ============================================================
@@ -151,7 +158,7 @@ local function makeTornadoBB(parent)
     bb.Size = UDim2.new(0, 270, 0, 80)
     bb.StudsOffset = Vector3.new(0, 120, 0)
     bb.AlwaysOnTop = true
-    bb.Parent = parent  -- must be a BasePart
+    bb.Parent = parent
 
     local bg = Instance.new("Frame")
     bg.Size = UDim2.new(1,0,1,0)
@@ -187,7 +194,6 @@ local function addTornadoESP(storm)
     h.Name = "RX_TornadoESP"
     h.Parent = game.CoreGui
 
-    -- Parent billboard to the center BasePart so it renders correctly
     local windFolder = storm:FindFirstChild("wind")
     local center     = windFolder and windFolder:FindFirstChild("center")
     local bbParent   = center or storm.PrimaryPart
@@ -209,7 +215,6 @@ local function addTornadoESP(storm)
         local d = getTornadoData(storm)
         if not d then return end
 
-        -- lazy-create billboard if center wasn't ready at addTornadoESP time
         if not bb and d.center then
             bb, lbl = makeTornadoBB(d.center)
         end
@@ -290,7 +295,7 @@ end
 
 local function enablePlayerESP()
     for _, p in ipairs(Players:GetPlayers()) do addPlayerESP(p) end
-    Connections.plrAdded   = Players.PlayerAdded:Connect(function(p)
+    Connections.plrAdded = Players.PlayerAdded:Connect(function(p)
         task.wait(1); if State.PlayerESP then addPlayerESP(p) end
     end)
     Connections.plrRemoved = Players.PlayerRemoving:Connect(function(p)
@@ -333,7 +338,7 @@ local function disableProbeESP()
 end
 
 -- ============================================================
---  FLY  (LinearVelocity -- no PlatformStand, no anti-cheat kick)
+--  FLY  (LinearVelocity, flat horizontal WASD, no PlatformStand)
 -- ============================================================
 local flyLV, flyAtt
 
@@ -371,24 +376,24 @@ local function enableFly()
         local r = getRoot()
         if not r or not flyLV or not flyLV.Parent then return end
 
-        local cam = Workspace.CurrentCamera
-        local spd = State.FlySpeed
-        local vel = Vector3.zero
-        local hasW = UserInputService:IsKeyDown(Enum.KeyCode.W)
-        local hasS = UserInputService:IsKeyDown(Enum.KeyCode.S)
-        local hasA = UserInputService:IsKeyDown(Enum.KeyCode.A)
-        local hasD = UserInputService:IsKeyDown(Enum.KeyCode.D)
+        local cam  = Workspace.CurrentCamera
+        local spd  = State.FlySpeed
+        -- Flatten camera vectors to horizontal so WASD never fights gravity
+        local fwd   = flatUnit(cam.CFrame.LookVector)
+        local right = flatUnit(cam.CFrame.RightVector)
+
+        local vel   = Vector3.zero
         local hasUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
         local hasDn = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 
-        if hasW then vel = vel + cam.CFrame.LookVector  * spd end
-        if hasS then vel = vel - cam.CFrame.LookVector  * spd end
-        if hasA then vel = vel - cam.CFrame.RightVector * spd end
-        if hasD then vel = vel + cam.CFrame.RightVector * spd end
-        if hasUp then vel = vel + Vector3.new(0, spd, 0)      end
-        if hasDn then vel = vel - Vector3.new(0, spd, 0)      end
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + fwd   * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - fwd   * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - right * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + right * spd end
+        if hasUp then vel = vel + Vector3.new(0, spd, 0) end
+        if hasDn then vel = vel - Vector3.new(0, spd, 0) end
 
-        -- hover when no vertical key
+        -- when no vertical key: hold altitude (zero Y)
         if not hasUp and not hasDn then
             vel = Vector3.new(vel.X, 0, vel.Z)
         end
@@ -398,7 +403,7 @@ local function enableFly()
 end
 
 -- ============================================================
---  CAR FLY  (LinearVelocity on chassis)
+--  CAR FLY  (LinearVelocity on chassis, flat horizontal WASD)
 -- ============================================================
 local carFlyAtt, carFlyLV
 
@@ -421,7 +426,6 @@ local function enableCarFly()
         local chassis = car:FindFirstChild("chassis")
         if not chassis then cleanCarFly(); return end
 
-        -- (re)create constraint if chassis changed
         if not (carFlyLV and carFlyLV.Parent == chassis) then
             cleanCarFly()
             carFlyAtt = Instance.new("Attachment")
@@ -438,16 +442,19 @@ local function enableCarFly()
             carFlyLV.Parent = chassis
         end
 
-        local cam = Workspace.CurrentCamera
-        local spd = State.FlySpeed * 2
-        local vel = Vector3.zero
+        local cam   = Workspace.CurrentCamera
+        local spd   = State.FlySpeed * 2
+        local fwd   = flatUnit(cam.CFrame.LookVector)
+        local right = flatUnit(cam.CFrame.RightVector)
+
+        local vel   = Vector3.zero
         local hasUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
         local hasDn = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
 
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + cam.CFrame.LookVector  * spd end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - cam.CFrame.LookVector  * spd end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - cam.CFrame.RightVector * spd end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + cam.CFrame.RightVector * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + fwd   * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - fwd   * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - right * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + right * spd end
         if hasUp then vel = vel + Vector3.new(0, spd, 0) end
         if hasDn then vel = vel - Vector3.new(0, spd, 0) end
 
@@ -472,13 +479,9 @@ local function enablePlayerInvincible()
         local hum  = getHum()
         local root = getRoot()
         if not hum or not root then return end
-
-        -- full health always
         if hum.Health < hum.MaxHealth then
             hum.Health = hum.MaxHealth
         end
-
-        -- cancel tornado-induced upward velocity
         local vel = root.AssemblyLinearVelocity
         if vel.Y > 8 then
             root.AssemblyLinearVelocity = Vector3.new(vel.X, 0, vel.Z)
@@ -493,7 +496,6 @@ local function enableCarInvincible()
     if Connections.carInvince then Connections.carInvince:Disconnect() end
     Connections.carInvince = RunService.Heartbeat:Connect(function()
         if not State.CarInvincible then
-            -- restore body modifier to default when turned off
             local car = getPlayerCar()
             if car then
                 local mod = car:FindFirstChild("modifiers")
@@ -504,14 +506,8 @@ local function enableCarInvincible()
         end
         local car = getPlayerCar()
         if not car then return end
-
-        -- set wind threshold so high the tornado can never lift the car
         local mod = car:FindFirstChild("modifiers")
-        if mod then
-            mod:SetAttribute("body", 999999)
-        end
-
-        -- also physically counter any upward velocity being applied to chassis
+        if mod then mod:SetAttribute("body", 999999) end
         local chassis = car:FindFirstChild("chassis")
         if chassis then
             local vel = chassis.AssemblyLinearVelocity
@@ -523,7 +519,7 @@ local function enableCarInvincible()
 end
 
 -- ============================================================
---  CAR MODIFIERS  (engine / traction / body attributes)
+--  CAR MODIFIERS
 -- ============================================================
 local carModT = 0
 Connections.carMods = RunService.Heartbeat:Connect(function(dt)
@@ -535,7 +531,6 @@ Connections.carMods = RunService.Heartbeat:Connect(function(dt)
     local mod = car:FindFirstChild("modifiers"); if not mod then return end
     if State.CarSpeedMod then mod:SetAttribute("engine",   State.CarSpeedVal) end
     if State.CarAccelMod then mod:SetAttribute("traction", State.CarAccelVal) end
-    -- CarInvincible overrides CarWindMod for the body attribute
     if State.CarWindMod and not State.CarInvincible then
         mod:SetAttribute("body", State.CarWindVal)
     end
@@ -558,8 +553,8 @@ end)
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
     cleanFly(); cleanCarFly()
-    if State.Fly             then enableFly()             end
-    if State.CarFly          then enableCarFly()          end
+    if State.Fly              then enableFly()              end
+    if State.CarFly           then enableCarFly()           end
     if State.PlayerInvincible then enablePlayerInvincible() end
     if State.CarInvincible    then enableCarInvincible()    end
 end)
@@ -620,7 +615,7 @@ TabP:CreateToggle({
     Callback=function(v) State.Fly=v; if v then enableFly() end end
 })
 TabP:CreateSlider({
-    Name="Fly Speed", Range={10,300}, Increment=10, Suffix="studs/s", CurrentValue=80, Flag="FlySpeed",
+    Name="Fly Speed", Range={10,1000}, Increment=10, Suffix="studs/s", CurrentValue=80, Flag="FlySpeed",
     Callback=function(v) State.FlySpeed=v end
 })
 
@@ -695,7 +690,7 @@ TabM:CreateButton({
 TabM:CreateSection("Info")
 TabM:CreateLabel("RscriptsX | Twisted 1.22")
 TabM:CreateLabel("Key: RscriptsX")
-TabM:CreateLabel("Version: 4.1")
+TabM:CreateLabel("Version: 4.2")
 
 Rayfield:LoadConfiguration()
-notify("RscriptsX","Twisted Script v4.1 loaded!",5)
+notify("RscriptsX","Twisted Script v4.2 loaded!",5)

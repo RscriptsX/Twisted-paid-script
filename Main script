@@ -1,25 +1,19 @@
--- RscriptsX | Twisted 1.22 Script
--- Rayfield GUI | Key: RscriptsX
--- Version: 3.0 (Tornado Chasing)
+-- RscriptsX | Twisted 1.22
+-- Version: 4.0
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local TeleportService   = game:GetService("TeleportService")
-local Workspace         = game:GetService("Workspace")
-local UserInputService  = game:GetService("UserInputService")
-
-local LocalPlayer = Players.LocalPlayer
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local TeleportService  = game:GetService("TeleportService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace        = game:GetService("Workspace")
+local LocalPlayer      = Players.LocalPlayer
 
 local Rayfield
-local ok = pcall(function()
-    Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield", true))()
-end)
-if not ok or not Rayfield then
-    pcall(function()
-        Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source", true))()
-    end)
+pcall(function() Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield",true))() end)
+if not Rayfield then
+    pcall(function() Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source",true))() end)
 end
-if not Rayfield then warn("Failed to load Rayfield"); return end
+if not Rayfield then warn("[RscriptsX] Rayfield failed to load"); return end
 
 local Window = Rayfield:CreateWindow({
     Name = "RscriptsX | Twisted 1.22",
@@ -30,7 +24,7 @@ local Window = Rayfield:CreateWindow({
     KeySystem = true,
     KeySettings = {
         Title = "RscriptsX",
-        Subtitle = "Enter key",
+        Subtitle = "Enter key to continue",
         Note = "Key: RscriptsX",
         FileName = "TwistedKey",
         SaveKey = true,
@@ -40,407 +34,518 @@ local Window = Rayfield:CreateWindow({
 })
 
 local State = {
-    TornadoESP = false,
-    PlayerESP = false,
-    ProbeESP = false,
-    Fly = false,
-    CarFly = false,
-    CarSpeedMod = false,
-    CarSpeed = 100,
-    CarAccelMod = false,
-    CarAccel = 50,
-    CarWindThreshMod = false,
-    CarWindThresh = 100,
-    AntiRagdoll = false,
-    InfiniteFuel = false,
-    FlySpeed = 50,
-    ShowTornadoWindspeed = true,
-    ShowTornadoRating = true,
-    ShowTornadoDistance = true,
+    TornadoESP    = false,
+    PlayerESP     = false,
+    ProbeESP      = false,
+    Fly           = false,
+    FlySpeed      = 80,
+    CarFly        = false,
+    CarSpeedMod   = false,
+    CarSpeedVal   = 100,
+    CarAccelMod   = false,
+    CarAccelVal   = 100,
+    CarWindMod    = false,
+    CarWindVal    = 200,
+    AntiRagdoll   = false,
 }
 
-local Connections = {}
-local ESPObjects = {}
-local TornadoData = {}
+local Connections  = {}
+local ESPObjects   = {}
+local PrevPositions = {}
 
-local function getChar() return LocalPlayer.Character end
-local function getHum() local c = getChar() return c and c:FindFirstChildOfClass("Humanoid") end
-local function getRoot() local c = getChar() return c and c:FindFirstChild("HumanoidRootPart") end
-local function notify(t, c, d) Rayfield:Notify({Title = t, Content = c, Duration = d or 3, Image = 4483362458}) end
+-- ============================================================
+--  HELPERS
+-- ============================================================
+local function getChar()  return LocalPlayer.Character end
+local function getHum()   local c=getChar(); return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot()  local c=getChar(); return c and c:FindFirstChild("HumanoidRootPart") end
+local function notify(t,c,d) Rayfield:Notify({Title=t,Content=c,Duration=d or 3,Image=4483362458}) end
 
-local function findTornadoes()
-    local tornadoes = {}
-    for _, child in ipairs(Workspace:GetChildren()) do
-        local name = child.Name:lower()
-        if name:find("tornado") or name:find("twister") or name:find("vortex") or
-           name:find("ef0") or name:find("ef1") or name:find("ef2") or
-           name:find("ef3") or name:find("ef4") or name:find("ef5") then
-            table.insert(tornadoes, child)
+local function getPlayerCar()
+    local hum = getHum()
+    if not hum or not hum.SeatPart then return nil end
+    -- structure: car -> seats -> driver (SeatPart)
+    local seat   = hum.SeatPart          -- "driver"
+    local seats  = seat.Parent           -- "seats" folder
+    local car    = seats and seats.Parent -- numbered car model
+    if car and car.Parent and car.Parent.Name == "cars" then return car end
+    return nil
+end
+
+local function getEF(winds)
+    if     winds >= 200 then return 5
+    elseif winds >= 165 then return 4
+    elseif winds >= 136 then return 3
+    elseif winds >= 111 then return 2
+    elseif winds >= 86  then return 1
+    elseif winds >= 65  then return 0
+    else                     return -1 end
+end
+
+local EF_COLORS = {
+    [-1] = Color3.fromRGB(180,180,180),
+    [0]  = Color3.fromRGB(0,  210,  0),
+    [1]  = Color3.fromRGB(180,210,  0),
+    [2]  = Color3.fromRGB(255,165,  0),
+    [3]  = Color3.fromRGB(255,  0,  0),
+    [4]  = Color3.fromRGB(180,  0,180),
+    [5]  = Color3.fromRGB(100,  0,100),
+}
+
+local function getTornadoData(storm)
+    local configs  = storm:FindFirstChild("configs")
+    local tFolder  = configs and configs:FindFirstChild("tornado")
+    if not tFolder then return nil end
+    local windFolder = storm:FindFirstChild("wind")
+    local center     = windFolder and windFolder:FindFirstChild("center")
+    local pos        = center and center.Position
+                    or (storm.PrimaryPart and storm.PrimaryPart.Position)
+                    or Vector3.zero
+    local function val(name) local v=tFolder:FindFirstChild(name); return v and v.Value or 0 end
+    local function bval(name) local v=tFolder:FindFirstChild(name); return v and v.Value or false end
+    return {
+        winds     = val("winds"),
+        otg       = bval("otg"),
+        windfield = val("windfield"),
+        width     = val("width"),
+        vort      = val("vort_stability"),
+        pos       = pos,
+    }
+end
+
+local function getMoveSpeed(storm, pos)
+    local now = tick()
+    local prev = PrevPositions[storm]
+    local speed = 0
+    if prev then
+        local dt = now - prev.t
+        if dt > 0.1 then
+            speed = (pos - prev.p).Magnitude / dt
+            PrevPositions[storm] = {p=pos, t=now}
+        else
+            speed = prev.spd or 0
         end
+    else
+        PrevPositions[storm] = {p=pos, t=now, spd=0}
     end
-    return tornadoes
+    PrevPositions[storm].spd = speed
+    return math.floor(speed * 10) / 10
 end
 
-local function getTornadoData(tornado)
-    local data = { ef = "?", windSpeed = 0, moveSpeed = 0, pos = Vector3.zero }
-    data.ef = tornado:GetAttribute("EFRating") or tornado:GetAttribute("Rating") or
-             tornado:GetAttribute("EF") or "?"
-    data.windSpeed = tornado:GetAttribute("WindSpeed") or tornado:GetAttribute("Windspeed") or 0
-    data.moveSpeed = tornado:GetAttribute("Speed") or tornado:GetAttribute("MoveSpeed") or 0
-    for _, v in ipairs(tornado:GetDescendants()) do
-        if v:IsA("NumberValue") or v:IsA("IntValue") then
-            local n = v.Name:lower()
-            if n:find("wind") then data.windSpeed = v.Value end
-            if n:find("ef") or n:find("rating") then data.ef = v.Value end
-        end
-    end
-    local primary = tornado:IsA("Model") and tornado.PrimaryPart or tornado
-    data.pos = primary and primary.Position or Vector3.zero
-    return data
+-- ============================================================
+--  TORNADO ESP
+-- ============================================================
+local function makeTornadoBB(storm)
+    local existing = storm:FindFirstChild("RX_BB")
+    if existing then existing:Destroy() end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "RX_BB"
+    bb.Size = UDim2.new(0, 270, 0, 80)
+    bb.StudsOffset = Vector3.new(0, 120, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = storm
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1,0,1,0)
+    bg.BackgroundColor3 = Color3.new(0,0,0)
+    bg.BackgroundTransparency = 0.3
+    bg.BorderSizePixel = 0
+    bg.Parent = bb
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0,6)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "lbl"
+    lbl.Size = UDim2.new(1,-8,1,-4)
+    lbl.Position = UDim2.new(0,4,0,2)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 13
+    lbl.TextColor3 = Color3.new(1,1,1)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextWrapped = true
+    lbl.Parent = bg
+
+    return bb, lbl
 end
 
-local function getEFColor(ef)
-    if ef == 0 or ef == "0" then return Color3.fromRGB(0, 255, 0)
-    elseif ef == 1 or ef == "1" then return Color3.fromRGB(255, 255, 0)
-    elseif ef == 2 or ef == "2" then return Color3.fromRGB(255, 165, 0)
-    elseif ef == 3 or ef == "3" then return Color3.fromRGB(255, 0, 0)
-    elseif ef == 4 or ef == "4" then return Color3.fromRGB(139, 0, 0)
-    elseif ef == 5 or ef == "5" then return Color3.fromRGB(128, 0, 128)
-    else return Color3.fromRGB(200, 200, 200) end
-end
+local function addTornadoESP(storm)
+    if ESPObjects[storm] then return end
 
-local function createTornadoESP(tornado)
-    if ESPObjects[tornado] then return end
-    local data = getTornadoData(tornado)
-    local color = getEFColor(data.ef)
     local h = Instance.new("Highlight")
-    h.FillColor = color; h.OutlineColor = color
-    h.FillTransparency = 0.5; h.OutlineTransparency = 0
     h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    h.Adornee = tornado
+    h.FillTransparency = 0.55
+    h.OutlineTransparency = 0
+    h.Adornee = storm
     h.Name = "RX_TornadoESP"
     h.Parent = game.CoreGui
-    
-    local bb = Instance.new("BillboardGui")
-    bb.Size = UDim2.new(0, 250, 0, 100)
-    bb.StudsOffset = Vector3.new(0, 80, 0)
-    bb.AlwaysOnTop = true
-    bb.Name = "RX_TornadoLabel"
-    bb.Parent = tornado
-    
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, 0, 1, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    frame.BackgroundTransparency = 0.4
-    frame.BorderSizePixel = 0
-    frame.Parent = bb
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 14
-    label.TextColor3 = Color3.fromRGB(255, 255, 255)
-    label.TextWrapped = true
-    label.Parent = frame
-    
-    local prevPos = data.pos
-    local prevTime = tick()
-    
-    local updateConn = RunService.Heartbeat:Connect(function()
-        if not tornado.Parent then
-            h:Destroy()
-            bb:Destroy()
-            updateConn:Disconnect()
-            ESPObjects[tornado] = nil
+
+    local bb, lbl = makeTornadoBB(storm)
+
+    local conn = RunService.Heartbeat:Connect(function()
+        if not storm.Parent then
+            pcall(function() h:Destroy() end)
+            pcall(function() bb:Destroy() end)
+            conn:Disconnect()
+            ESPObjects[storm] = nil
             return
         end
-        
-        local data = getTornadoData(tornado)
-        local root = getRoot()
-        local dist = root and (root.Position - data.pos).Magnitude or 0
-        local now = tick()
-        local moveSpeed = (data.pos - prevPos).Magnitude / math.max(now - prevTime, 0.01)
-        prevPos = data.pos
-        prevTime = now
-        
-        local text = "EF" .. tostring(data.ef)
-        if State.ShowTornadoWindspeed then text = text .. "\nWind: " .. math.floor(data.windSpeed) .. " mph" end
-        if State.ShowTornadoDistance then text = text .. "\nDist: " .. math.floor(dist) .. " studs" end
-        label.Text = text
-        
-        local c = getEFColor(data.ef)
-        h.FillColor = c
-        h.OutlineColor = c
-        label.TextColor3 = c
-    end)
-    
-    ESPObjects[tornado] = { h = h, bb = bb, conn = updateConn }
-end
+        if not State.TornadoESP then return end
 
-local function disableTornadoESP()
-    for tornado, objs in pairs(ESPObjects) do
-        if objs.h then objs.h:Destroy() end
-        if objs.bb then objs.bb:Destroy() end
-        if objs.conn then objs.conn:Disconnect() end
-    end
-    ESPObjects = {}
+        local d = getTornadoData(storm)
+        if not d then return end
+
+        local root = getRoot()
+        local dist = root and math.floor((root.Position - d.pos).Magnitude) or 0
+        local spd  = getMoveSpeed(storm, d.pos)
+        local ef   = getEF(d.winds)
+        local col  = EF_COLORS[ef] or EF_COLORS[-1]
+
+        h.FillColor    = col
+        h.OutlineColor = col
+        lbl.TextColor3 = col
+
+        lbl.Text = string.format(
+            "%s  |  %s  |  Vort: %d\nWinds: %d mph   Width: %d\nSpeed: %.1f s/s   Dist: %d studs",
+            ef >= 0 and ("EF"..ef) or "PRE-TORNADO",
+            d.otg and "ON GROUND" or "ALOFT",
+            d.vort,
+            math.floor(d.winds),
+            math.floor(d.width),
+            spd,
+            dist
+        )
+    end)
+
+    ESPObjects[storm] = {type="tornado", h=h, bb=bb, conn=conn}
 end
 
 local function enableTornadoESP()
-    disableTornadoESP()
-    for _, t in ipairs(findTornadoes()) do createTornadoESP(t) end
+    local sf = Workspace:FindFirstChild("storm_related") and Workspace.storm_related:FindFirstChild("storms")
+    if not sf then notify("Tornado ESP", "storm_related/storms not found!", 4); return end
+    for _, s in ipairs(sf:GetChildren()) do addTornadoESP(s) end
+    Connections.stormAdded = sf.ChildAdded:Connect(function(s)
+        task.wait(0.5); if State.TornadoESP then addTornadoESP(s) end
+    end)
 end
 
+local function disableTornadoESP()
+    for k, v in pairs(ESPObjects) do
+        if v.type == "tornado" then
+            pcall(function() v.h:Destroy() end)
+            pcall(function() v.bb:Destroy() end)
+            v.conn:Disconnect()
+            ESPObjects[k] = nil
+        end
+    end
+    if Connections.stormAdded then Connections.stormAdded:Disconnect() end
+end
+
+-- ============================================================
+--  PLAYER ESP
+-- ============================================================
 local function addPlayerESP(player)
     if player == LocalPlayer or ESPObjects[player] then return end
-    local h = nil
+    local h
     local function attach(char)
         if h then h:Destroy() end
-        if State.PlayerESP then
-            h = Instance.new("Highlight")
-            h.FillColor = Color3.fromRGB(0, 150, 255)
-            h.OutlineColor = Color3.fromRGB(0, 100, 220)
-            h.FillTransparency = 0.4
-            h.OutlineTransparency = 0
-            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            h.Adornee = char
-            h.Name = "RX_PlayerESP"
-            h.Parent = game.CoreGui
-        end
+        if not State.PlayerESP then return end
+        h = Instance.new("Highlight")
+        h.FillColor = Color3.fromRGB(0,150,255)
+        h.OutlineColor = Color3.fromRGB(0,100,220)
+        h.FillTransparency = 0.4
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee = char
+        h.Name = "RX_PlayerESP"
+        h.Parent = game.CoreGui
     end
     if player.Character then attach(player.Character) end
     local conn = player.CharacterAdded:Connect(function(c) task.wait(0.5); attach(c) end)
-    ESPObjects[player] = { h = function() return h end, conn = conn, destroy = function() if h then h:Destroy() end; conn:Disconnect() end }
+    ESPObjects[player] = {
+        type = "player",
+        destroy = function() if h then h:Destroy() end; conn:Disconnect() end
+    }
 end
 
 local function enablePlayerESP()
     for _, p in ipairs(Players:GetPlayers()) do addPlayerESP(p) end
-    Connections.playerAdded = Players.PlayerAdded:Connect(function(p) task.wait(1); if State.PlayerESP then addPlayerESP(p) end end)
+    Connections.plrAdded   = Players.PlayerAdded:Connect(function(p) task.wait(1); if State.PlayerESP then addPlayerESP(p) end end)
+    Connections.plrRemoved = Players.PlayerRemoving:Connect(function(p)
+        if ESPObjects[p] then ESPObjects[p].destroy(); ESPObjects[p]=nil end
+    end)
 end
 
 local function disablePlayerESP()
-    for _, p in ipairs(Players:GetPlayers()) do if ESPObjects[p] then ESPObjects[p].destroy(); ESPObjects[p] = nil end end
-    if Connections.playerAdded then Connections.playerAdded:Disconnect() end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if ESPObjects[p] and ESPObjects[p].type=="player" then ESPObjects[p].destroy(); ESPObjects[p]=nil end
+    end
+    if Connections.plrAdded   then Connections.plrAdded:Disconnect() end
+    if Connections.plrRemoved then Connections.plrRemoved:Disconnect() end
 end
 
+-- ============================================================
+--  PROBE ESP
+-- ============================================================
 local function enableProbeESP()
-    for _, probe in ipairs(Workspace:GetDescendants()) do
-        if probe.Name:lower():find("probe") and probe:IsA("BasePart") then
-            local h = Instance.new("Highlight")
-            h.FillColor = Color3.fromRGB(255, 200, 0)
-            h.OutlineColor = Color3.fromRGB(200, 150, 0)
-            h.FillTransparency = 0.4
-            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            h.Adornee = probe
-            h.Name = "RX_ProbeESP"
-            h.Parent = game.CoreGui
-        end
+    local pf = Workspace:FindFirstChild("player_related") and Workspace.player_related:FindFirstChild("probes")
+    if not pf then notify("Probe ESP", "Probes folder not found!", 3); return end
+    local function add(obj)
+        local h = Instance.new("Highlight")
+        h.FillColor = Color3.fromRGB(255,200,0)
+        h.OutlineColor = Color3.fromRGB(200,150,0)
+        h.FillTransparency = 0.3
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee = obj
+        h.Name = "RX_ProbeESP"
+        h.Parent = game.CoreGui
     end
+    for _, p in ipairs(pf:GetChildren()) do add(p) end
+    Connections.probeAdded = pf.ChildAdded:Connect(add)
 end
 
 local function disableProbeESP()
-    for _, v in ipairs(game.CoreGui:GetChildren()) do if v.Name == "RX_ProbeESP" then v:Destroy() end end
+    for _, v in ipairs(game.CoreGui:GetChildren()) do if v.Name=="RX_ProbeESP" then v:Destroy() end end
+    if Connections.probeAdded then Connections.probeAdded:Disconnect() end
 end
+
+-- ============================================================
+--  FLY
+-- ============================================================
+local flyBV, flyBG
 
 local function enableFly()
     local root = getRoot()
     if not root then return end
-    State.Fly = true
-    
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-    bv.Velocity = Vector3.zero
-    bv.Parent = root
-    
-    local bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-    bg.P = 1e6
-    bg.CFrame = root.CFrame
-    bg.Parent = root
-    
+    if flyBV and flyBV.Parent then flyBV:Destroy() end
+    if flyBG and flyBG.Parent then flyBG:Destroy() end
+
+    flyBV = Instance.new("BodyVelocity")
+    flyBV.MaxForce = Vector3.new(1e9,1e9,1e9)
+    flyBV.Velocity = Vector3.zero
+    flyBV.Parent = root
+
+    flyBG = Instance.new("BodyGyro")
+    flyBG.MaxTorque = Vector3.new(1e9,1e9,1e9)
+    flyBG.P = 1e6
+    flyBG.CFrame = root.CFrame
+    flyBG.Parent = root
+
+    local hum = getHum()
+    if hum then hum.PlatformStand = true end
+
+    if Connections.fly then Connections.fly:Disconnect() end
     Connections.fly = RunService.Heartbeat:Connect(function()
-        if not State.Fly then bv:Destroy(); bg:Destroy(); Connections.fly:Disconnect(); return end
-        local root = getRoot()
-        if not root then return end
-        
-        local vel = Vector3.zero
+        if not State.Fly then
+            if flyBV and flyBV.Parent then flyBV:Destroy() end
+            if flyBG and flyBG.Parent then flyBG:Destroy() end
+            local h = getHum(); if h then h.PlatformStand = false end
+            Connections.fly:Disconnect()
+            return
+        end
+        local r = getRoot(); if not r then return end
         local cam = Workspace.CurrentCamera
-        local speed = State.FlySpeed
-        
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + cam.CFrame.LookVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - cam.CFrame.LookVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - cam.CFrame.RightVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + cam.CFrame.RightVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel = vel + Vector3.new(0, speed, 0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then vel = vel - Vector3.new(0, speed, 0) end
-        
-        bv.Velocity = vel
-        bg.CFrame = cam.CFrame
+        local spd = State.FlySpeed
+        local vel = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W)         then vel += cam.CFrame.LookVector  * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S)         then vel -= cam.CFrame.LookVector  * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A)         then vel -= cam.CFrame.RightVector * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D)         then vel += cam.CFrame.RightVector * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space)     then vel += Vector3.new(0,spd,0)         end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then vel -= Vector3.new(0,spd,0)         end
+        flyBV.Velocity = vel
+        flyBG.CFrame   = cam.CFrame
     end)
 end
 
+-- ============================================================
+--  CAR FLY
+-- ============================================================
 local function enableCarFly()
-    State.CarFly = true
-    Connections.carfly = RunService.Heartbeat:Connect(function()
-        if not State.CarFly then Connections.carfly:Disconnect(); return end
-        local char = getChar()
-        if not char then return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum or not hum.SeatPart then return end
-        
-        local car = hum.SeatPart.Parent
-        local primary = car:IsA("Model") and car.PrimaryPart or hum.SeatPart
-        if not primary then return end
-        
-        local vel = Vector3.zero
-        local cam = Workspace.CurrentCamera
-        local speed = State.FlySpeed * 1.5
-        
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + cam.CFrame.LookVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - cam.CFrame.LookVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - cam.CFrame.RightVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + cam.CFrame.RightVector * speed end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel = vel + Vector3.new(0, speed, 0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then vel = vel - Vector3.new(0, speed, 0) end
-        
-        local bodyVel = primary:FindFirstChild("RX_CarFlyVel")
-        if not bodyVel then
-            bodyVel = Instance.new("BodyVelocity")
-            bodyVel.Name = "RX_CarFlyVel"
-            bodyVel.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-            bodyVel.Parent = primary
+    if Connections.carFly then Connections.carFly:Disconnect() end
+    Connections.carFly = RunService.Heartbeat:Connect(function()
+        if not State.CarFly then
+            -- clean up any leftover BodyVelocity
+            local car = getPlayerCar()
+            if car then
+                local ch = car:FindFirstChild("chassis")
+                if ch then local bv = ch:FindFirstChild("RX_CFV"); if bv then bv:Destroy() end end
+            end
+            Connections.carFly:Disconnect()
+            return
         end
-        bodyVel.Velocity = vel
+        local car = getPlayerCar(); if not car then return end
+        local chassis = car:FindFirstChild("chassis"); if not chassis then return end
+
+        local bv = chassis:FindFirstChild("RX_CFV")
+        if not bv then
+            bv = Instance.new("BodyVelocity")
+            bv.Name = "RX_CFV"
+            bv.MaxForce = Vector3.new(1e9,1e9,1e9)
+            bv.Parent = chassis
+        end
+
+        local cam = Workspace.CurrentCamera
+        local spd = State.FlySpeed * 2
+        local vel = Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W)         then vel += cam.CFrame.LookVector  * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S)         then vel -= cam.CFrame.LookVector  * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A)         then vel -= cam.CFrame.RightVector * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D)         then vel += cam.CFrame.RightVector * spd end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space)     then vel += Vector3.new(0,spd,0)         end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then vel -= Vector3.new(0,spd,0)         end
+        bv.Velocity = vel
     end)
 end
 
-local function getCurrentCar()
-    local char = getChar()
-    if not char then return nil end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum or not hum.SeatPart then return nil end
-    return hum.SeatPart.Parent
-end
-
-local carSpeedTimer = 0
+-- ============================================================
+--  CAR MODIFIERS  (engine / traction / body attributes)
+-- ============================================================
+local carModT = 0
 Connections.carMods = RunService.Heartbeat:Connect(function(dt)
-    carSpeedTimer = carSpeedTimer + dt
-    if carSpeedTimer < 0.2 then return end
-    carSpeedTimer = 0
-    
-    local car = getCurrentCar()
-    if not car then return end
-    
-    if State.CarSpeedMod then
-        local seat = car:FindFirstChildOfClass("VehicleSeat")
-        if seat then seat.MaxSpeed = State.CarSpeed end
-    end
-    
-    if State.CarAccelMod then
-        local seat = car:FindFirstChildOfClass("VehicleSeat")
-        if seat then seat.Torque = State.CarAccel end
-    end
-    
-    if State.CarWindThreshMod then
-        for _, v in ipairs(car:GetDescendants()) do
-            if v:IsA("NumberValue") and v.Name:lower():find("wind") then
-                v.Value = State.CarWindThresh
-            end
-        end
-    end
-    
-    if State.InfiniteFuel then
-        for _, v in ipairs(car:GetDescendants()) do
-            if v:IsA("NumberValue") and v.Name:lower():find("fuel") then
-                v.Value = v.MaxValue or 100
-            end
-        end
-    end
+    carModT += dt
+    if carModT < 0.25 then return end
+    carModT = 0
+    if not (State.CarSpeedMod or State.CarAccelMod or State.CarWindMod) then return end
+    local car = getPlayerCar(); if not car then return end
+    local mod = car:FindFirstChild("modifiers"); if not mod then return end
+    if State.CarSpeedMod then mod:SetAttribute("engine",  State.CarSpeedVal) end
+    if State.CarAccelMod then mod:SetAttribute("traction",State.CarAccelVal) end
+    if State.CarWindMod  then mod:SetAttribute("body",    State.CarWindVal)  end
 end)
 
-Connections.antiRagdoll = RunService.Heartbeat:Connect(function()
+-- ============================================================
+--  ANTI-RAGDOLL
+-- ============================================================
+Connections.antiRag = RunService.Heartbeat:Connect(function()
     if not State.AntiRagdoll then return end
-    local char = getChar()
-    if not char then return end
-    for _, v in ipairs(char:GetDescendants()) do
+    local c = getChar(); if not c then return end
+    for _, v in ipairs(c:GetDescendants()) do
         if v:IsA("BallSocketConstraint") then v.Enabled = false end
     end
 end)
 
-local TabTornado = Window:CreateTab("Tornado", 4483362458)
-TabTornado:CreateSection("Tornado ESP")
-TabTornado:CreateToggle({Name = "Tornado ESP", CurrentValue = false, Flag = "TornadoESP",
-    Callback = function(v) State.TornadoESP = v; if v then enableTornadoESP() else disableTornadoESP() end end})
-TabTornado:CreateToggle({Name = "Show Windspeed", CurrentValue = true, Flag = "ShowWS",
-    Callback = function(v) State.ShowTornadoWindspeed = v end})
-TabTornado:CreateToggle({Name = "Show EF Rating", CurrentValue = true, Flag = "ShowEF",
-    Callback = function(v) State.ShowTornadoRating = v end})
-TabTornado:CreateToggle({Name = "Show Distance", CurrentValue = true, Flag = "ShowDist",
-    Callback = function(v) State.ShowTornadoDistance = v end})
-TabTornado:CreateButton({Name = "Teleport to Nearest Tornado",
-    Callback = function()
-        local root = getRoot()
-        if not root then return end
-        local tornadoes = findTornadoes()
-        local closest, dist = nil, math.huge
-        for _, t in ipairs(tornadoes) do
-            local primary = t:IsA("Model") and t.PrimaryPart or t
-            if primary then
-                local d = (root.Position - primary.Position).Magnitude
-                if d < dist then dist = d; closest = primary end
+-- Respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if State.Fly then enableFly() end
+end)
+
+-- ============================================================
+--  TAB: TORNADO
+-- ============================================================
+local TabT = Window:CreateTab("Tornado", 4483362458)
+
+TabT:CreateSection("ESP")
+TabT:CreateToggle({
+    Name="Tornado ESP", CurrentValue=false, Flag="TornadoESP",
+    Callback=function(v) State.TornadoESP=v; if v then enableTornadoESP() else disableTornadoESP() end end
+})
+
+TabT:CreateSection("Teleport")
+TabT:CreateButton({
+    Name="Teleport to Nearest Tornado",
+    Callback=function()
+        local root = getRoot(); if not root then return end
+        local sf = Workspace:FindFirstChild("storm_related") and Workspace.storm_related:FindFirstChild("storms")
+        if not sf then notify("Teleport","No storms folder.",3); return end
+        local best, bestD = nil, math.huge
+        for _, s in ipairs(sf:GetChildren()) do
+            local d = getTornadoData(s)
+            if d and d.otg then
+                local dist = (root.Position - d.pos).Magnitude
+                if dist < bestD then bestD=dist; best=d end
             end
         end
-        if closest then root.CFrame = CFrame.new(closest.Position + Vector3.new(0, 10, 0))
-        notify("Teleport", "Teleported to tornado!", 2) else notify("Teleport", "No tornado found.", 2) end
-    end})
+        if best then
+            root.CFrame = CFrame.new(best.pos + Vector3.new(0,15,0))
+            notify("Teleport","Teleported to tornado!",2)
+        else
+            notify("Teleport","No tornado on the ground right now.",3)
+        end
+    end
+})
 
-local TabPlayer = Window:CreateTab("Player", 4483362458)
-TabPlayer:CreateSection("ESP")
-TabPlayer:CreateToggle({Name = "Player ESP", CurrentValue = false, Flag = "PlayerESP",
-    Callback = function(v) State.PlayerESP = v; if v then enablePlayerESP() else disablePlayerESP() end end})
-TabPlayer:CreateToggle({Name = "Probe ESP", CurrentValue = false, Flag = "ProbeESP",
-    Callback = function(v) State.ProbeESP = v; if v then enableProbeESP() else disableProbeESP() end end})
-TabPlayer:CreateSection("Movement")
-TabPlayer:CreateToggle({Name = "Fly", CurrentValue = false, Flag = "Fly",
-    Callback = function(v) State.Fly = v; if v then enableFly() end end})
-TabPlayer:CreateSlider({Name = "Fly Speed", Range = {10, 200}, Increment = 5,
-    Suffix = "studs/s", CurrentValue = 50, Flag = "FlySpeed",
-    Callback = function(v) State.FlySpeed = v end})
-TabPlayer:CreateToggle({Name = "Anti-Ragdoll", CurrentValue = false, Flag = "AntiRag",
-    Callback = function(v) State.AntiRagdoll = v end})
+-- ============================================================
+--  TAB: PLAYER
+-- ============================================================
+local TabP = Window:CreateTab("Player", 4483362458)
 
-local TabVehicle = Window:CreateTab("Vehicle", 4483362458)
-TabVehicle:CreateSection("Flight")
-TabVehicle:CreateToggle({Name = "Car Fly", CurrentValue = false, Flag = "CarFly",
-    Callback = function(v) State.CarFly = v; if v then enableCarFly() end end})
-TabVehicle:CreateSection("Speed & Acceleration")
-TabVehicle:CreateToggle({Name = "Car Speed Modifier", CurrentValue = false, Flag = "CarSpeedMod",
-    Callback = function(v) State.CarSpeedMod = v end})
-TabVehicle:CreateSlider({Name = "Car Max Speed", Range = {50, 500}, Increment = 10,
-    Suffix = "studs/s", CurrentValue = 100, Flag = "CarSpeed",
-    Callback = function(v) State.CarSpeed = v end})
-TabVehicle:CreateToggle({Name = "Car Acceleration Modifier", CurrentValue = false, Flag = "CarAccelMod",
-    Callback = function(v) State.CarAccelMod = v end})
-TabVehicle:CreateSlider({Name = "Car Torque", Range = {10, 200}, Increment = 5,
-    Suffix = "torque", CurrentValue = 50, Flag = "CarAccel",
-    Callback = function(v) State.CarAccel = v end})
-TabVehicle:CreateToggle({Name = "Car Windspeed Threshold Modifier", CurrentValue = false, Flag = "CarWindMod",
-    Callback = function(v) State.CarWindThreshMod = v end})
-TabVehicle:CreateSlider({Name = "Wind Threshold", Range = {10, 500}, Increment = 10,
-    Suffix = "mph", CurrentValue = 100, Flag = "CarWindThresh",
-    Callback = function(v) State.CarWindThresh = v end})
-TabVehicle:CreateToggle({Name = "Infinite Fuel", CurrentValue = false, Flag = "InfFuel",
-    Callback = function(v) State.InfiniteFuel = v end})
+TabP:CreateSection("ESP")
+TabP:CreateToggle({
+    Name="Player ESP", CurrentValue=false, Flag="PlayerESP",
+    Callback=function(v) State.PlayerESP=v; if v then enablePlayerESP() else disablePlayerESP() end end
+})
+TabP:CreateToggle({
+    Name="Probe ESP", CurrentValue=false, Flag="ProbeESP",
+    Callback=function(v) State.ProbeESP=v; if v then enableProbeESP() else disableProbeESP() end end
+})
 
-local TabMisc = Window:CreateTab("Misc", 4483362458)
-TabMisc:CreateSection("Game")
-TabMisc:CreateButton({Name = "Rejoin Server",
-    Callback = function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end})
-TabMisc:CreateSection("Info")
-TabMisc:CreateLabel("RscriptsX | Twisted 1.22")
-TabMisc:CreateLabel("Key: RscriptsX")
-TabMisc:CreateLabel("Version: 3.0")
+TabP:CreateSection("Movement")
+TabP:CreateToggle({
+    Name="Fly  [WASD + Space / Shift]", CurrentValue=false, Flag="Fly",
+    Callback=function(v) State.Fly=v; if v then enableFly() end end
+})
+TabP:CreateSlider({
+    Name="Fly Speed", Range={10,300}, Increment=10, Suffix="studs/s", CurrentValue=80, Flag="FlySpeed",
+    Callback=function(v) State.FlySpeed=v end
+})
+TabP:CreateToggle({
+    Name="Anti-Ragdoll", CurrentValue=false, Flag="AntiRag",
+    Callback=function(v) State.AntiRagdoll=v end
+})
+
+-- ============================================================
+--  TAB: VEHICLE
+-- ============================================================
+local TabV = Window:CreateTab("Vehicle", 4483362458)
+
+TabV:CreateSection("Car Fly")
+TabV:CreateToggle({
+    Name="Car Fly  [WASD + Space / Shift]", CurrentValue=false, Flag="CarFly",
+    Callback=function(v) State.CarFly=v; if v then enableCarFly() end end
+})
+
+TabV:CreateSection("Car Modifiers")
+TabV:CreateToggle({
+    Name="Car Speed Modifier  (engine)", CurrentValue=false, Flag="CarSpeedMod",
+    Callback=function(v) State.CarSpeedMod=v end
+})
+TabV:CreateSlider({
+    Name="Engine Power", Range={50,300}, Increment=5, Suffix="%", CurrentValue=100, Flag="CarSpeedVal",
+    Callback=function(v) State.CarSpeedVal=v end
+})
+TabV:CreateToggle({
+    Name="Car Acceleration Modifier  (traction)", CurrentValue=false, Flag="CarAccelMod",
+    Callback=function(v) State.CarAccelMod=v end
+})
+TabV:CreateSlider({
+    Name="Traction", Range={50,300}, Increment=5, Suffix="%", CurrentValue=100, Flag="CarAccelVal",
+    Callback=function(v) State.CarAccelVal=v end
+})
+TabV:CreateToggle({
+    Name="Car Windspeed Threshold  (body)", CurrentValue=false, Flag="CarWindMod",
+    Callback=function(v) State.CarWindMod=v end
+})
+TabV:CreateSlider({
+    Name="Wind Threshold", Range={100,500}, Increment=10, Suffix="%", CurrentValue=200, Flag="CarWindVal",
+    Callback=function(v) State.CarWindVal=v end
+})
+
+-- ============================================================
+--  TAB: MISC
+-- ============================================================
+local TabM = Window:CreateTab("Misc", 4483362458)
+TabM:CreateSection("Game")
+TabM:CreateButton({
+    Name="Rejoin Server",
+    Callback=function() TeleportService:Teleport(game.PlaceId,LocalPlayer) end
+})
+TabM:CreateSection("Info")
+TabM:CreateLabel("RscriptsX | Twisted 1.22")
+TabM:CreateLabel("Key: RscriptsX")
+TabM:CreateLabel("Version: 4.0")
 
 Rayfield:LoadConfiguration()
-notify("RscriptsX", "Twisted Script v3.0 loaded! Press WASD+Space to fly.", 5)
+notify("RscriptsX","Twisted Script v4.0 loaded!",5)
